@@ -11,13 +11,16 @@ timestamps, unioned, and written as snapshot-partitioned Parquet under
 ``data/processed/triples``.
 """
 
+import sys
 from datetime import datetime
 from pathlib import Path
 
-from src.ingestion.ingest import ingest_snapshots, read_parquet, write_parquet
-from src.ingestion.spark_session import get_spark
-
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))  # make the `src` package importable when run directly
+
+from src.ingestion.ingest import ingest_snapshots, read_parquet, write_parquet  # noqa: E402
+from src.ingestion.spark_session import get_spark  # noqa: E402
+
 RAW = ROOT / "data" / "raw"
 OUT = ROOT / "data" / "processed" / "triples"
 

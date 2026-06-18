@@ -3,8 +3,7 @@
 A scalable framework for **Temporal Semantic Association Rule Mining in Evolving
 Knowledge Graphs**, built on Apache Spark (PySpark) and RDFLib.
 
-> MSc research project — Isya Isyaku (24/508CSCE/032), University of Abuja,
-> Department of Computer Science. Supervisor: Dr. Fatima Binta Abdullahi.
+
 
 ## What it does
 
@@ -20,17 +19,18 @@ laptop to Google Cloud Dataproc / AWS EMR, and to be benchmarked against
 | Stage | Module | Status |
 |-------|--------|--------|
 | Ingestion — RDF → time-partitioned Parquet | [`src/ingestion/`](src/ingestion/) | ✅ implemented |
-| Windowing — sliding temporal windows | [`src/windowing/`](src/windowing/) | ⬜ planned |
+| Windowing — sliding temporal windows | [`src/windowing/`](src/windowing/) | ✅ implemented |
 | Mining — distributed semantic ARM | [`src/mining/`](src/mining/) | ⬜ planned |
 | Metrics — temporal significance | [`src/metrics/`](src/metrics/) | ⬜ planned |
 
 ## Setup
 
-Requires **Java 11** (`brew install openjdk@11`) and **Python 3.9+**.
+Requires **Java 17** (PySpark 4.x needs JDK 17+) and **Python 3.9+**.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+brew install openjdk@17
+export JAVA_HOME="/opt/homebrew/opt/openjdk@17"   # so Spark finds the right JVM
+python3 -m pip install -r requirements.txt
 ```
 
 ## Quick start
@@ -38,7 +38,8 @@ python3 -m venv .venv
 Ingest the committed sample snapshots into snapshot-partitioned Parquet:
 
 ```bash
-.venv/bin/python scripts/ingest_samples.py
+export JAVA_HOME="/opt/homebrew/opt/openjdk@17"
+python3 scripts/ingest_samples.py
 ```
 
 ## Ingestion design
@@ -59,11 +60,12 @@ Canonical schema: `subject, predicate, object, object_kind`
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest
+python3 -m pytest
 ```
 
-`tests/test_rdf_parser.py` runs without Spark; `tests/test_ingest.py` spins up a
-local SparkSession.
+`tests/test_rdf_parser.py` runs without Spark; `tests/test_ingest.py` and
+`tests/test_windowing.py` spin up a local SparkSession. `tests/conftest.py`
+auto-points `JAVA_HOME` at a Homebrew JDK 17+ if it is not already set.
 
 ## Project layout
 
