@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Data (raw dumps + generated Parquet are large / reproducible)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+# Keep the tiny committed samples for tests/examples
+!data/raw/sample_*.nt
+
+# Spark
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Local project context (not for version control)
+claude.MD

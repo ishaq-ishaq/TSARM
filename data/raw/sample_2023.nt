@@ -1,0 +1,8 @@
+<http://example.org/Alice> <http://xmlns.com/foaf/0.1/knows> <http://example.org/Bob> .
+<http://example.org/Alice> <http://example.org/worksAt> <http://example.org/AcmeCorp> .
+<http://example.org/Bob> <http://example.org/worksAt> <http://example.org/AcmeCorp> .
+<http://example.org/Alice> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Engineer> .
+<http://example.org/Bob> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Engineer> .
+# A literal with a datatype (a temporal annotation on the employment fact)
+<http://example.org/Alice> <http://example.org/hireDate> "2023-01-15"^^<http://www.w3.org/2001/XMLSchema#date> .
+<http://example.org/Alice> <http://www.w3.org/2000/01/rdf-schema#label> "Alice"@en .
