@@ -22,6 +22,7 @@ laptop to Google Cloud Dataproc / AWS EMR, and to be benchmarked against
 | Windowing — sliding temporal windows | [`src/windowing/`](src/windowing/) | ✅ implemented |
 | Mining — distributed semantic ARM | [`src/mining/`](src/mining/) | ✅ implemented |
 | Metrics — temporal significance | [`src/metrics/`](src/metrics/) | ✅ implemented |
+| Evaluation — baseline comparison harness | [`src/evaluation/`](src/evaluation/) | ✅ implemented |
 
 ## Setup
 
@@ -58,6 +59,24 @@ Computed per rule across the window sequence (see
 - **Temporal confidence drift** — net change `conf_last − conf_first`, its
   per-step rate, and **confidence volatility** (mean |consecutive change|)
 - **Rule Persistence Score** — `RPS(r) = (1/n)·|{w : conf_w(r) ≥ τ}|`
+
+## Baseline comparison (objective iv)
+
+Compare TSARM against SANSA and RDFRules on the same datasets:
+
+```bash
+export JAVA_HOME="/opt/homebrew/opt/openjdk@17"
+python3 scripts/run_benchmark.py     # writes results/benchmark_sample.csv
+```
+
+TSARM runs in-process. SANSA / RDFRules are external JVM systems wired in via
+command templates — set `$SANSA_CMD` / `$RDFRULES_CMD` (placeholders:
+`{input} {output} {min_support} {min_confidence}`; see
+[`src/evaluation/adapters.py`](src/evaluation/adapters.py)). Until configured
+they are reported as *skipped* rather than blocking the run. The harness reports
+**scalability** (runtime, input size), **rule quality** (rule count, mean
+support/confidence) and **temporal sensitivity** (persistence / drift, which the
+snapshot-based baselines cannot produce).
 
 ## Ingestion design
 

@@ -19,6 +19,10 @@ spark-warehouse/
 metastore_db/
 derby.log
 
+# Benchmark outputs (regenerated)
+results/*
+!results/.gitkeep
+
 # Jupyter
 .ipynb_checkpoints/
 
