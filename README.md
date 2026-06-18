@@ -21,7 +21,7 @@ laptop to Google Cloud Dataproc / AWS EMR, and to be benchmarked against
 | Ingestion — RDF → time-partitioned Parquet | [`src/ingestion/`](src/ingestion/) | ✅ implemented |
 | Windowing — sliding temporal windows | [`src/windowing/`](src/windowing/) | ✅ implemented |
 | Mining — distributed semantic ARM | [`src/mining/`](src/mining/) | ✅ implemented |
-| Metrics — temporal significance | [`src/metrics/`](src/metrics/) | ⬜ planned |
+| Metrics — temporal significance | [`src/metrics/`](src/metrics/) | ✅ implemented |
 
 ## Setup
 
@@ -35,12 +35,29 @@ python3 -m pip install -r requirements.txt
 
 ## Quick start
 
-Ingest the committed sample snapshots into snapshot-partitioned Parquet:
+Run the full pipeline (ingestion → windowing → mining → temporal metrics) on the
+committed sample snapshots:
 
 ```bash
 export JAVA_HOME="/opt/homebrew/opt/openjdk@17"
+python3 scripts/run_pipeline.py
+```
+
+Or just ingest the samples into snapshot-partitioned Parquet:
+
+```bash
 python3 scripts/ingest_samples.py
 ```
+
+## Temporal metrics
+
+Computed per rule across the window sequence (see
+[`src/metrics/temporal.py`](src/metrics/temporal.py) for formal definitions):
+
+- **Temporal support** — time-averaged support `TS(r) = (1/n) Σ_w supp_w(r)`
+- **Temporal confidence drift** — net change `conf_last − conf_first`, its
+  per-step rate, and **confidence volatility** (mean |consecutive change|)
+- **Rule Persistence Score** — `RPS(r) = (1/n)·|{w : conf_w(r) ≥ τ}|`
 
 ## Ingestion design
 
