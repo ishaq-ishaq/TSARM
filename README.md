@@ -20,7 +20,7 @@ laptop to Google Cloud Dataproc / AWS EMR, and to be benchmarked against
 |-------|--------|--------|
 | Ingestion — RDF → time-partitioned Parquet | [`src/ingestion/`](src/ingestion/) | ✅ implemented |
 | Windowing — sliding temporal windows | [`src/windowing/`](src/windowing/) | ✅ implemented |
-| Mining — distributed semantic ARM | [`src/mining/`](src/mining/) | ⬜ planned |
+| Mining — distributed semantic ARM | [`src/mining/`](src/mining/) | ✅ implemented |
 | Metrics — temporal significance | [`src/metrics/`](src/metrics/) | ⬜ planned |
 
 ## Setup
