@@ -96,6 +96,29 @@ triples/s as fixed Spark startup overhead amortises — the expected distributed
 scaling profile. The injected persistent rule scores persistence 1.0 while the
 transient rule decays, confirming temporal sensitivity at scale.
 
+### Real-world data (DBpedia)
+
+[`scripts/run_dbpedia.py`](scripts/run_dbpedia.py) runs the pipeline on two real
+DBpedia `instance_types_en` release dumps (2015-10 and 2016-10) as temporal
+snapshots. Spark reads the `.bz2` dumps directly. Download them into
+`data/raw/` first (≈42 MB each):
+
+```bash
+curl -L -o data/raw/dbpedia_2015-10_instance_types_en.ttl.bz2 \
+  https://downloads.dbpedia.org/2015-10/core-i18n/en/instance_types_en.ttl.bz2
+curl -L -o data/raw/dbpedia_2016-10_instance_types_en.ttl.bz2 \
+  https://downloads.dbpedia.org/2016-10/core-i18n/en/instance_types_en.ttl.bz2
+```
+
+Result on the M1 dev machine: **10.2 M real triples** ingested at ~151 k
+triples/s; 5.58 M distinct entities; 236 k entities whose type was *refined*
+between releases. Mining surfaces the type-evolution rule
+`type=owl:Thing ⇒ type=dbo:Person` (confidence 0.52, lift 4.57) — generic
+entities reclassified to a specific class across releases, the evolving-KG
+pattern TSARM targets. (`instance_types` carries one type per entity per
+release, so richer rules / multi-window temporal trajectories need a
+multi-predicate dump such as `mappingbased_objects` and more snapshots.)
+
 ## Ingestion design
 
 Each input RDF file is treated as a **snapshot** valid at a known timestamp.
