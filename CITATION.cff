@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use TSARM, please cite it as below."
+title: "TSARM: Scalable Temporal Semantic Association Rule Mining in Evolving Knowledge Graphs"
+abstract: >-
+  TSARM is an open-source, Apache Spark-based framework for mining association
+  rules from time-partitioned RDF knowledge graphs, scoring them with temporal
+  significance metrics (temporal support, temporal confidence drift, and rule
+  persistence) over sliding windows.
+type: software
+version: "0.1.0"
+license: MIT
+repository-code: "https://github.com/ishaq-ishaq/TSARM"
+authors:
+  - given-names: Isya
+    family-names: Isyaku
+    email: isyakuisya@gmail.com
+    affiliation: "University of Abuja, Department of Computer Science"
+keywords:
+  - association rule mining
+  - knowledge graphs
+  - RDF
+  - temporal
+  - Apache Spark
+# A Zenodo DOI will be minted on release; record it here once available.
+# doi: 10.5281/zenodo.XXXXXXX

@@ -116,8 +116,36 @@ between releases. Mining surfaces the type-evolution rule
 `type=owl:Thing ⇒ type=dbo:Person` (confidence 0.52, lift 4.57) — generic
 entities reclassified to a specific class across releases, the evolving-KG
 pattern TSARM targets. (`instance_types` carries one type per entity per
-release, so richer rules / multi-window temporal trajectories need a
-multi-predicate dump such as `mappingbased_objects` and more snapshots.)
+release, so richer rules need a multi-predicate dump such as
+`mappingbased_objects`.)
+
+#### Multi-window temporal trajectories
+
+[`scripts/run_dbpedia_temporal.py`](scripts/run_dbpedia_temporal.py) adds the
+2016-04 release for **three** snapshots, giving two overlapping windows
+(`{2015-10, 2016-04}`, `{2016-04, 2016-10}`) and so a real confidence trajectory
+per rule (15.4 M triples). TSARM's temporal metrics then distinguish:
+
+| Rule | Windows | Confidence | Drift | Persistence |
+| --- | --- | --- | --- | --- |
+| `owl:Thing ⇒ Person` | w0, w1 | 0.299 → 0.344 | +0.045 | 1.0 (persistent) |
+| `Person ⇒ owl:Thing` | w1 only | 0.213 | 0.0 | 0.5 (transient) |
+
+The persistent rule's confidence *rises* across the 2015→2016 releases (positive
+drift), while the second rule appears only in the later window — exactly the
+temporal significance signal (objectives ii & iv) the metrics are designed to
+capture, here on real evolving-KG data.
+
+## Install / reproducibility
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .            # or: pip install -e ".[test,notebooks]"
+```
+
+The project is packaged (`setup.cfg` + `pyproject.toml`), MIT-licensed, and
+ships a [`CITATION.cff`](CITATION.cff); a Zenodo DOI is to be minted on release
+(objective iii). Dependencies are pinned in [`requirements.txt`](requirements.txt).
 
 ## Ingestion design
 
