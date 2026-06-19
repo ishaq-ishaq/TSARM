@@ -103,7 +103,13 @@ The two mine different rule *kinds* — AMIE+ exhaustively enumerates logical Ho
 rules (many, lower mean confidence), TSARM mines few focused transactional rules
 — so rule **counts** are not directly comparable, but **runtime** and **temporal
 capability** are: TSARM is faster here and is the only system producing temporal
-significance metrics. (SANSA can be wired the same way via `$SANSA_CMD`.)
+significance metrics.
+
+> **SANSA:** its ARM module (AmieSpark) exists only in the legacy SANSA v0.7.1
+> (Scala 2.11 / Spark 2.x) and was removed from current SANSA — incompatible
+> with this project's Spark 4.0 stack, so a SANSA run is not pursued. See
+> [`docs/baselines.md`](docs/baselines.md) for the feasibility analysis. The
+> harness keeps a ready `$SANSA_CMD` adapter slot.
 
 ### Scalability sweep
 
