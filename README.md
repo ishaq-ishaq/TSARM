@@ -78,6 +78,33 @@ they are reported as *skipped* rather than blocking the run. The harness reports
 support/confidence) and **temporal sensitivity** (persistence / drift, which the
 snapshot-based baselines cannot produce).
 
+#### RDFRules head-to-head
+
+RDFRules (AMIE+) is fully wired via [`scripts/rdfrules_mine.py`](scripts/rdfrules_mine.py),
+which drives its batch mode and emits a `rules.csv` for the harness:
+
+```bash
+# download + unpack an RDFRules release into $RDFRULES_HOME, then:
+export RDFRULES_HOME=/path/to/rdfrules-1.9.0
+export JAVA_HOME="/opt/homebrew/opt/openjdk@17"
+export RDFRULES_CMD='python3 scripts/rdfrules_mine.py --input {input} \
+  --output {output} --min-support {min_support} --min-confidence {min_confidence}'
+python3 scripts/run_benchmark.py --synthetic 2000
+```
+
+Result on a 16 k-triple synthetic dataset (RDFRules 1.9.0, Java 17):
+
+| System | Runtime | #Rules | Mean conf | Temporal metrics |
+| --- | --- | --- | --- | --- |
+| **TSARM** | 57.9 s | 4 | 0.81 | ✅ persistence, drift |
+| **RDFRules** (AMIE+) | 82.3 s | 22 777 | 0.50 | ❌ snapshot-only |
+
+The two mine different rule *kinds* — AMIE+ exhaustively enumerates logical Horn
+rules (many, lower mean confidence), TSARM mines few focused transactional rules
+— so rule **counts** are not directly comparable, but **runtime** and **temporal
+capability** are: TSARM is faster here and is the only system producing temporal
+significance metrics. (SANSA can be wired the same way via `$SANSA_CMD`.)
+
 ### Scalability sweep
 
 A synthetic temporal-RDF generator ([`src/evaluation/synthetic.py`](src/evaluation/synthetic.py))

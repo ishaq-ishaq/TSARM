@@ -351,13 +351,17 @@ def sansa_baseline(**kwargs) -> ExternalCommandBaseline:
 
 
 def rdfrules_baseline(**kwargs) -> ExternalCommandBaseline:
-    """RDFRules adapter (Zeman, Kliegr and Svetek, 2021). Configure via ``$RDFRULES_CMD``.
+    """RDFRules adapter (Zeman, Kliegr and Svatek, 2021). Configure via ``$RDFRULES_CMD``.
 
-    Example ``$RDFRULES_CMD`` (an RDFRules console/script invocation that exports
-    mined rules to ``{output}``)::
+    ``scripts/rdfrules_mine.py`` bridges RDFRules' batch mode to this adapter's
+    ``{input}/{output}`` contract (build task pipeline -> run ``bin/main`` ->
+    write ``rules.csv``). Download and unpack an RDFRules release, then::
 
-        java -jar rdfrules.jar run-script mine.json \\
-            -Dinput={input} -Doutput={output} \\
-            -DminSupport={min_support} -DminConfidence={min_confidence}
+        export RDFRULES_HOME=/path/to/rdfrules-1.9.0
+        export RDFRULES_CMD='python3 scripts/rdfrules_mine.py --input {input} \\
+            --output {output} --min-support {min_support} \\
+            --min-confidence {min_confidence}'
+
+    Verified with RDFRules 1.9.0 under Java 17.
     """
     return ExternalCommandBaseline(name="RDFRules", command_env="RDFRULES_CMD", **kwargs)
