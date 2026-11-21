@@ -173,7 +173,7 @@ class TSARMBaseline(Baseline):
         spark,
         min_support: float = 0.1,
         min_confidence: float = 0.5,
-        tau: float = 0.6,
+        tau: float = 0.70,  # proposal Sec. 3.5.5 default
         width: int = 1,
         step: int = 1,
         include_literals: bool = False,
@@ -194,7 +194,7 @@ class TSARMBaseline(Baseline):
 
         from src.ingestion.ingest import ingest_snapshots
         from src.metrics.temporal import compute_metrics
-        from src.mining.arm import mine
+        from src.mining.arm import mine_temporal
         from src.windowing.sliding_window import (
             assign_windows,
             build_windows,
@@ -212,13 +212,14 @@ class TSARMBaseline(Baseline):
         n_windows = len(build_windows(snaps, width=self.width, step=self.step))
         windowed = assign_windows(self.spark, triples, width=self.width, step=self.step)
 
-        _, rules = mine(
+        _, _, candidates = mine_temporal(
             windowed,
+            window_ids=range(n_windows),
             min_support=self.min_support,
             min_confidence=self.min_confidence,
             include_literals=self.include_literals,
         )
-        metrics = compute_metrics(rules, n_windows=n_windows, tau=self.tau)
+        metrics = compute_metrics(candidates, n_windows=n_windows, tau=self.tau)
 
         quality = metrics.agg(
             F.count("*").alias("n"),
