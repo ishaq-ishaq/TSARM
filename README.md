@@ -168,17 +168,22 @@ release, so richer rules need a multi-predicate dump such as
 [`scripts/run_dbpedia_temporal.py`](scripts/run_dbpedia_temporal.py) adds the
 2016-04 release for **three** snapshots, giving two overlapping windows
 (`{2015-10, 2016-04}`, `{2016-04, 2016-10}`) and so a real confidence trajectory
-per rule (15.4 M triples). TSARM's temporal metrics then distinguish:
+per rule (15.4 M triples, 43 s end to end on an Apple M5 Pro). Each candidate
+rule's confidence is recounted in *every* window, including windows where it was
+below the mining threshold, so its trajectory is exact:
 
-| Rule | Windows | Confidence | Drift | Persistence |
-| --- | --- | --- | --- | --- |
-| `owl:Thing ⇒ Person` | w0, w1 | 0.299 → 0.344 | +0.045 | 1.0 (persistent) |
-| `Person ⇒ owl:Thing` | w1 only | 0.213 | 0.0 | 0.5 (transient) |
+| Rule | Frequent in | Confidence (w0 → w1) | Drift | Persistence | Lifecycle |
+| --- | --- | --- | --- | --- | --- |
+| `owl:Thing ⇒ Person` | w0, w1 | 0.299 → 0.344 | +0.045 | 1.0 | stable |
+| `Person ⇒ owl:Thing` | w1 | 0.093 → 0.213 | +0.120 | 0.5 | emerging |
 
-The persistent rule's confidence *rises* across the 2015→2016 releases (positive
-drift), while the second rule appears only in the later window — exactly the
-temporal significance signal (objectives ii & iv) the metrics are designed to
-capture, here on real evolving-KG data.
+The first rule holds in both windows with drift inside the ±0.05 stability band.
+The second is not absent from the earlier window: it is already present at
+confidence 0.093, below the mining threshold, and more than doubles. TSARM
+therefore classifies it as an *emerging* rule, the temporal significance signal
+(objectives ii & iv) the metrics are designed to capture, here on real
+evolving-KG data. Zero-padding absent windows would misreport this rule as
+transient.
 
 ## Install / reproducibility
 
