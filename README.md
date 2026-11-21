@@ -134,11 +134,45 @@ export JAVA_HOME="/opt/homebrew/opt/openjdk@17"
 python3 scripts/scale_test.py 2000 10000 40000   # entity counts -> results/scale_test.csv
 ```
 
-On the M1 dev machine, pipeline runtime stays roughly flat (~10–16 s) as the
-triple count grows 20× (16k → 320k), i.e. throughput rises from ~1k to ~19k
-triples/s as fixed Spark startup overhead amortises — the expected distributed
-scaling profile. The injected persistent rule scores persistence 1.0 while the
-transient rule decays, confirming temporal sensitivity at scale.
+#### Core scaling on one machine (experiment E1)
+
+[`scripts/core_scaling.py`](scripts/core_scaling.py) runs the full pipeline
+(ingest → window → mine + recount → temporal metrics) with Spark `local[p]`.
+Each core count gets one discarded warm-up run, then 3 measured runs. Shuffle
+partitions are fixed, so every run does identical work. Results are saved with
+a hardware fingerprint.
+
+```bash
+python3 scripts/core_scaling.py --mode strong --cores 1,2,4,8,15 --entities 1500000
+python3 scripts/core_scaling.py --mode weak   --cores 1,2,4,8,15 --entities 150000
+```
+
+**Strong scaling**: 12M triples, Apple M5 Pro (15 cores, 24 GB), mean ± SD of
+3 runs:
+
+| Cores | Runtime | Speedup | Efficiency | Serial fraction (Karp–Flatt) |
+| --- | --- | --- | --- | --- |
+| 1 | 122.9 ± 4.7 s | 1.00 | 1.00 | n/a |
+| 2 | 52.5 ± 4.3 s | 2.34 | 1.17 | −0.15 |
+| 4 | 38.3 ± 4.4 s | 3.21 | 0.80 | 0.08 |
+| 8 | 32.7 ± 9.6 s | 3.76 | 0.47 | 0.16 |
+| 15 | 25.6 ± 5.1 s | **4.81** | 0.32 | 0.15 |
+
+On a 10× smaller input (1.2M triples) the serial fraction is 0.31–0.50 and
+speedup peaks at 2.25×. Fixed coordination costs dominate small inputs, and
+larger inputs scale better.
+
+**Weak scaling**: 150k entities per core (1.2M → 18M triples). Per-worker
+efficiency is about 1.0 up to 4 cores (1.06, 0.98) and 0.75 at 8 cores. At 15
+cores it drops to about 0.3 (re-measured with 5 runs). Giving Spark a larger
+heap made it *worse*, which points to the 24 GB of physical memory, not CPU,
+as the single-node limit at high core counts. Pooling memory across nodes
+(experiment E2, [`docs/oracle_cluster.md`](docs/oracle_cluster.md)) is the
+remedy.
+
+The injected persistent rule scores persistence 1.0 (*stable*) and the
+transient rule is classified *decaying*, confirming temporal sensitivity at
+scale.
 
 ### Real-world data (DBpedia)
 
