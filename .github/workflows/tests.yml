@@ -1,0 +1,40 @@
+# Reproducibility CI (proposal Amendment 2): runs the full test suite on a
+# clean GitHub-hosted runner (free for public repositories) on every push and
+# pull request, so anyone can see the results reproduce off the author's laptop.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17 (required by PySpark 4.x)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyspark==4.0.3 rdflib==7.6.0 "pandas>=2.2.0" "scipy>=1.10" "pytest>=8.0"
+
+      - name: Run tests
+        env:
+          TSARM_DRIVER_MEMORY: 4g
+          TSARM_SHUFFLE_PARTITIONS: "8"
+        run: python -m pytest -q
