@@ -2,22 +2,25 @@
 
 Provides a single place to construct a tuned local SparkSession so that every
 module (ingestion, windowing, mining, metrics) shares consistent configuration.
-Defaults are tuned for the local development target described in CLAUDE.md
-(MacBook Pro M1, 16 GB RAM) and are intended to be overridden when running on
-Google Cloud Dataproc or AWS EMR.
+Defaults are tuned for the local development target (MacBook Pro M5 Pro,
+15 cores, 24 GB RAM) and can be overridden per run via the ``config`` argument
+or the ``TSARM_DRIVER_MEMORY`` / ``TSARM_SHUFFLE_PARTITIONS`` environment
+variables (e.g. on a smaller VM or a Dataproc/EMR cluster).
 """
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from pyspark.sql import SparkSession
 
-# Conservative local defaults: leave headroom for the OS and the driver JVM on a
-# 16 GB machine. Override via the `config` argument for cluster deployment.
+# Local defaults: in local mode the whole job runs inside the driver JVM, so give
+# it about half of a 24 GB machine and leave the rest for the OS, Python workers
+# and the page cache. Shuffle partitions ~2x the 15 cores.
 _LOCAL_DEFAULTS = {
-    "spark.driver.memory": "6g",
-    "spark.sql.shuffle.partitions": "16",
+    "spark.driver.memory": os.environ.get("TSARM_DRIVER_MEMORY", "12g"),
+    "spark.sql.shuffle.partitions": os.environ.get("TSARM_SHUFFLE_PARTITIONS", "32"),
     "spark.sql.parquet.compression.codec": "snappy",
     # Arrow speeds up pandas <-> Spark conversion used in notebooks/tests.
     "spark.sql.execution.arrow.pyspark.enabled": "true",

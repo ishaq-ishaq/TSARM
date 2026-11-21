@@ -4,6 +4,7 @@ pyspark==4.0.3
 rdflib==7.6.0
 pyarrow>=15.0.0
 pandas>=2.2.0
+scipy>=1.10  # confidence intervals / statistical tests (Table 3.4)
 
 # Testing
 pytest==8.2.0
