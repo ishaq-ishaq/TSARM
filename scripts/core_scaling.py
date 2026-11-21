@@ -98,10 +98,23 @@ def _run_once(p: int, dataset, master_url=None, executor_memory="3g") -> dict:
         result = TSARMBaseline(
             spark, min_support=MIN_SUPPORT, min_confidence=MIN_CONFIDENCE
         ).run(dataset)
+        if master_url:
+            # Executors actually granted (memory or core limits on the workers
+            # can silently give fewer than requested). Excludes the driver.
+            granted = spark.sparkContext._jsc.sc().getExecutorMemoryStatus().size() - 1
+        else:
+            granted = p
     finally:
         # A fresh SparkContext per run, so local[p] actually changes.
         spark.stop()
+    if master_url and granted != p:
+        print(
+            f"  WARNING: requested p={p} executor cores but {granted} executor(s) were granted; "
+            "check worker cores/memory vs --executor-memory",
+            flush=True,
+        )
     return {
+        "executors_granted": granted,
         "runtime_sec": result.runtime_sec,
         "n_input_triples": result.n_input_triples,
         "n_rules": result.n_rules,
@@ -173,6 +186,7 @@ def main() -> None:
                         m["n_input_triples"], m["runtime_sec"]
                     ),
                     "n_rules": m["n_rules"],
+                    "executors_granted": m["executors_granted"],
                 }
                 runs.append(row)
                 print(

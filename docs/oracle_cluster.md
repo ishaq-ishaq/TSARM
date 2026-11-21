@@ -90,7 +90,11 @@ TSARM_DRIVER_MEMORY=1g python3 scripts/core_scaling.py \
     --mode strong --cores 1,2,3,4 --entities 300000 --executor-memory 3g
 ```
 
-`p` = number of 1-core executors, i.e. worker nodes. Results are written to
+`p` = number of 1-core executors, i.e. worker nodes. Each run records
+`executors_granted`, and the script prints a **WARNING** if fewer executors
+than `p` were granted (e.g. `--executor-memory` larger than a worker's free
+memory). Discard such runs. With 4 GB workers, 3 GB executors give exactly one
+executor per worker. Results are written to
 `results/cluster_scaling_strong_{runs,summary}.csv` and `.json`, with a
 hardware fingerprint. Copy them back with
 `scp ubuntu@<tsarm-1-public-ip>:TSARM/results/cluster_scaling_* results/`.
