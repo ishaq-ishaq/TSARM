@@ -177,8 +177,10 @@ class TSARMBaseline(Baseline):
         width: int = 1,
         step: int = 1,
         include_literals: bool = False,
+        item_mode: str = "fact",
     ):
         super().__init__(min_support, min_confidence)
+        self.item_mode = item_mode
         self.spark = spark
         self.tau = tau
         self.width = width
@@ -218,6 +220,7 @@ class TSARMBaseline(Baseline):
             min_support=self.min_support,
             min_confidence=self.min_confidence,
             include_literals=self.include_literals,
+            item_mode=self.item_mode,
         )
         metrics = compute_metrics(candidates, n_windows=n_windows, tau=self.tau)
 
