@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""Run the TSARM vs SANSA vs RDFRules comparison on the sample dataset.
+"""Run the TSARM vs SANSA vs RDFRules vs AMIE+ comparison on the sample dataset.
 
-TSARM runs in-process. SANSA and RDFRules run only if their command templates
-are configured via ``$SANSA_CMD`` / ``$RDFRULES_CMD`` (see
+TSARM runs in-process. SANSA, RDFRules and AMIE+ run only if their command templates
+are configured via ``$SANSA_CMD`` / ``$RDFRULES_CMD`` / ``$AMIE_CMD`` (see
 ``src/evaluation/adapters.py``); otherwise they are reported as skipped.
 
 Usage (from the project root)::
@@ -24,6 +24,7 @@ from src.evaluation.adapters import (  # noqa: E402
     Dataset,
     Snapshot,
     TSARMBaseline,
+    amie_baseline,
     rdfrules_baseline,
     sansa_baseline,
 )
@@ -86,6 +87,7 @@ def main() -> None:
             TSARMBaseline(spark, min_support=min_support, min_confidence=min_confidence),
             sansa_baseline(min_support=min_support, min_confidence=min_confidence),
             rdfrules_baseline(min_support=min_support, min_confidence=min_confidence),
+            amie_baseline(min_support=min_support, min_confidence=min_confidence),
         ]
         results = run_benchmark(baselines, [dataset])
 
