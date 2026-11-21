@@ -13,7 +13,7 @@ Adapters
   that is invoked as a shell command and writes a rules file. The command is
   supplied via an environment variable, so no third-party JAR is bundled; if the
   variable is unset the baseline reports itself unavailable and is skipped.
-* :func:`sansa_baseline` / :func:`rdfrules_baseline` -- pre-configured
+* :func:`sansa_baseline` / :func:`rdfrules_baseline` / :func:`amie_baseline` -- pre-configured
   :class:`ExternalCommandBaseline` instances for the two systems named in the
   research proposal (Lehmann et al., 2017; Zeman, Kliegr and Svetek, 2021).
 
@@ -366,3 +366,19 @@ def rdfrules_baseline(**kwargs) -> ExternalCommandBaseline:
     Verified with RDFRules 1.9.0 under Java 17.
     """
     return ExternalCommandBaseline(name="RDFRules", command_env="RDFRULES_CMD", **kwargs)
+
+
+def amie_baseline(**kwargs) -> ExternalCommandBaseline:
+    """AMIE adapter (AMIE+ lineage: Galarraga et al., 2015; AMIE 3.5.1). Configure via ``$AMIE_CMD``.
+
+    ``scripts/amie_mine.py`` pools all snapshots into one static graph (§3.7.2),
+    runs the AMIE jar and writes ``rules.csv`` (support = head coverage,
+    confidence = standard confidence). Download the jar from
+    https://github.com/dig-team/AMIE/releases, then::
+
+        export AMIE_JAR=$PWD/tools/amie/amie3.5.1.jar
+        export AMIE_CMD='python3 scripts/amie_mine.py --input {input} \\
+            --output {output} --min-support {min_support} \\
+            --min-confidence {min_confidence}'
+    """
+    return ExternalCommandBaseline(name="AMIE+", command_env="AMIE_CMD", **kwargs)
