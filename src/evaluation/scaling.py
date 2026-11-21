@@ -47,6 +47,18 @@ def efficiency(s_p: float, p: int) -> float:
     return s_p / p if p > 0 else 0.0
 
 
+def karp_flatt(s_p: float, p: int) -> float:
+    """Experimentally determined serial fraction (Karp & Flatt, 1990).
+
+    ``e = (1/S_p - 1/p) / (1 - 1/p)``. A roughly constant ``e`` across ``p``
+    means a fixed sequential part (Amdahl). A rising ``e`` means parallel
+    overhead (coordination, shuffles) grows with ``p``. Undefined at p = 1.
+    """
+    if p <= 1 or s_p <= 0:
+        return float("nan")
+    return (1.0 / s_p - 1.0 / p) / (1.0 - 1.0 / p)
+
+
 def weak_scaling_ratio(th_1: float, th_p: float) -> float:
     """``W_p = Th_p / Th_1`` exactly as written in proposal Sec. 3.7.3 i."""
     return th_p / th_1 if th_1 > 0 else 0.0
@@ -109,6 +121,7 @@ def strong_scaling_table(runtimes: Dict[int, List[float]]) -> List[Dict]:
                 "runtime_ci_high": s.ci_high,
                 "speedup": sp,
                 "efficiency": efficiency(sp, p),
+                "serial_fraction": karp_flatt(sp, p),
             }
         )
     return rows
