@@ -33,11 +33,18 @@ Outputs
 * *rules*: ``window_id, antecedent, consequent, confidence, lift, support,
   rule_key`` where ``rule_key`` is a stable, order-independent identifier so the
   same rule can be tracked across windows by the metrics stage.
+
+``recount_candidates`` / ``mine_temporal`` -> the *candidate* table of proposal
+Sec. 3.5.4: every rule frequent in at least one window, with its exact
+support/confidence/lift recomputed in **every** window (an ``emitted`` flag
+marks the windows where FP-Growth itself reported it). The temporal metrics are
+defined over the full window set, so this dense table is what
+:func:`src.metrics.temporal.compute_metrics` should consume.
 """
 
 from __future__ import annotations
 
-from typing import List, Tuple
+from typing import List, Sequence, Tuple
 
 from pyspark.ml.fpm import FPGrowth
 from pyspark.sql import Column, DataFrame
@@ -185,3 +192,178 @@ def mine(
     return mine_rules(
         transactions, min_support=min_support, min_confidence=min_confidence
     )
+
+
+# ---------------------------------------------------------------------------
+# Candidate recount (proposal Sec. 3.5.4)
+# ---------------------------------------------------------------------------
+
+_KEY_SEP = "\u001f"  # unit separator: cannot occur inside an IRI-based item
+
+
+def _itemset_key(col: Column) -> Column:
+    return F.concat_ws(_KEY_SEP, col)
+
+
+def recount_candidates(
+    transactions: DataFrame,
+    rules: DataFrame,
+    window_ids: Sequence[int],
+) -> DataFrame:
+    """Exact per-window counts for every candidate rule in *every* window.
+
+    Proposal Sec. 3.5.4 retains a rule as a *candidate temporal rule* if it is
+    frequent (``supp_w(r) >= sigma``) in at least one window, and the temporal
+    metrics of Sec. 3.5.5 are then defined over the full window set ``W``.
+    FP-Growth only reports a rule in the windows where it clears the mining
+    thresholds, so this function recomputes Eq. 3.2-3.4 for each candidate in
+    each window directly from the transactions::
+
+        supp_w(r) = n_w(X u Y) / N_w                    (Eq. 3.2)
+        conf_w(r) = n_w(X u Y) / n_w(X)                 (Eq. 3.3)
+        lift_w(r) = conf_w(r) / supp_w(Y)               (Eq. 3.4)
+
+    A measure whose denominator is zero (empty window, or antecedent absent) is
+    reported as ``0.0``: the rule makes no correct predictions there.
+
+    Counting is distributed: transactions and candidate itemsets are both
+    exploded to one row per item, joined on the item (the candidate side is
+    broadcast -- it is small), and a transaction contains an itemset iff it
+    matches all of the itemset's items.
+
+    Args:
+        transactions: ``(window_id, subject, items)`` from
+            :func:`build_transactions` (items duplicate-free per transaction).
+        rules: Per-window emitted rules from :func:`mine_rules` (the candidate
+            set is their distinct ``rule_key``).
+        window_ids: The complete ordered window index ``W`` (from the windowing
+            stage), including windows that produced no transactions or rules.
+
+    Returns:
+        Dense DataFrame, one row per (candidate rule, window)::
+
+            window_id, rule_key, antecedent, consequent, n_transactions,
+            antecedent_count, consequent_count, rule_count,
+            support, confidence, lift, emitted
+
+        ``emitted`` is ``True`` where FP-Growth reported the rule in that
+        window (it met ``min_support`` and ``min_confidence`` there).
+    """
+    window_ids = list(window_ids)
+    if not window_ids:
+        raise ValueError("window_ids must be non-empty.")
+    spark = transactions.sparkSession
+
+    cands = (
+        rules.select("rule_key", "antecedent", "consequent")
+        .dropDuplicates(["rule_key"])
+        .withColumn("_ante", F.array_sort(F.array_distinct("antecedent")))
+        .withColumn("_cons", F.array_sort(F.array_distinct("consequent")))
+        .withColumn("_full", F.array_sort(F.array_union("antecedent", "consequent")))
+        .withColumn("ante_key", _itemset_key(F.col("_ante")))
+        .withColumn("cons_key", _itemset_key(F.col("_cons")))
+        .withColumn("full_key", _itemset_key(F.col("_full")))
+    )
+
+    itemsets = (
+        cands.select(F.col("ante_key").alias("iset_key"), F.col("_ante").alias("iset"))
+        .unionByName(
+            cands.select(F.col("cons_key").alias("iset_key"), F.col("_cons").alias("iset"))
+        )
+        .unionByName(
+            cands.select(F.col("full_key").alias("iset_key"), F.col("_full").alias("iset"))
+        )
+        .dropDuplicates(["iset_key"])
+    )
+    iset_items = itemsets.select(
+        "iset_key", F.size("iset").alias("iset_size"), F.explode("iset").alias("item")
+    )
+
+    tx_items = transactions.select(
+        "window_id", "subject", F.explode("items").alias("item")
+    )
+    itemset_counts = (
+        tx_items.join(F.broadcast(iset_items), "item")
+        .groupBy("window_id", "subject", "iset_key", "iset_size")
+        .agg(F.count("*").alias("matched"))
+        .where(F.col("matched") == F.col("iset_size"))
+        .groupBy("window_id", "iset_key")
+        .agg(F.count("*").alias("n"))
+    )
+
+    n_tx = transactions.groupBy("window_id").agg(F.count("*").alias("n_transactions"))
+    windows = spark.createDataFrame([(int(w),) for w in window_ids], "window_id int")
+
+    def _count_for(key_col: str, alias: str) -> DataFrame:
+        return itemset_counts.select(
+            "window_id",
+            F.col("iset_key").alias(key_col),
+            F.col("n").alias(alias),
+        )
+
+    emitted = rules.select("window_id", "rule_key").distinct().withColumn(
+        "emitted", F.lit(True)
+    )
+
+    dense = (
+        cands.crossJoin(F.broadcast(windows))
+        .join(n_tx, "window_id", "left")
+        .join(_count_for("ante_key", "antecedent_count"), ["window_id", "ante_key"], "left")
+        .join(_count_for("cons_key", "consequent_count"), ["window_id", "cons_key"], "left")
+        .join(_count_for("full_key", "rule_count"), ["window_id", "full_key"], "left")
+        .join(emitted, ["window_id", "rule_key"], "left")
+        .fillna(0, subset=["n_transactions", "antecedent_count", "consequent_count", "rule_count"])
+        .fillna(False, subset=["emitted"])
+    )
+
+    n = F.col("n_transactions").cast("double")
+    n_x = F.col("antecedent_count").cast("double")
+    n_y = F.col("consequent_count").cast("double")
+    n_xy = F.col("rule_count").cast("double")
+    support = F.when(n > 0, n_xy / n).otherwise(F.lit(0.0))
+    confidence = F.when(n_x > 0, n_xy / n_x).otherwise(F.lit(0.0))
+    # Guards keep every division ANSI-safe (Spark 4 errors on x/0).
+    lift = F.when(
+        (n > 0) & (n_x > 0) & (n_y > 0), (n_xy / n_x) / (n_y / n)
+    ).otherwise(F.lit(0.0))
+
+    return dense.select(
+        "window_id",
+        "rule_key",
+        "antecedent",
+        "consequent",
+        F.col("n_transactions").cast("long").alias("n_transactions"),
+        F.col("antecedent_count").cast("long").alias("antecedent_count"),
+        F.col("consequent_count").cast("long").alias("consequent_count"),
+        F.col("rule_count").cast("long").alias("rule_count"),
+        support.alias("support"),
+        confidence.alias("confidence"),
+        lift.alias("lift"),
+        "emitted",
+    )
+
+
+def mine_temporal(
+    windowed_df: DataFrame,
+    window_ids: Sequence[int],
+    min_support: float = 0.3,
+    min_confidence: float = 0.6,
+    include_literals: bool = False,
+) -> Tuple[DataFrame, DataFrame, DataFrame]:
+    """Per-window mining plus the candidate recount the temporal metrics need.
+
+    Returns:
+        ``(itemsets, rules, candidates)`` -- ``itemsets``/``rules`` as from
+        :func:`mine_rules` (only windows where each rule was frequent), and
+        ``candidates`` the dense per-window table from
+        :func:`recount_candidates`, which is the input
+        :func:`src.metrics.temporal.compute_metrics` expects.
+    """
+    transactions = build_transactions(
+        windowed_df, include_literals=include_literals
+    ).cache()
+    itemsets, rules = mine_rules(
+        transactions, min_support=min_support, min_confidence=min_confidence
+    )
+    candidates = recount_candidates(transactions, rules, window_ids)
+    return itemsets, rules, candidates

@@ -21,7 +21,8 @@ sys.path.insert(0, str(ROOT))
 from src.ingestion.ingest import ingest_snapshots  # noqa: E402
 from src.ingestion.spark_session import get_spark  # noqa: E402
 from src.metrics.temporal import compute_metrics  # noqa: E402
-from src.mining.arm import mine  # noqa: E402
+from src.metrics.export import export_rules  # noqa: E402
+from src.mining.arm import mine_temporal  # noqa: E402
 from src.windowing.sliding_window import assign_windows, build_windows, ordered_snapshots  # noqa: E402
 
 RAW = ROOT / "data" / "raw"
@@ -31,7 +32,7 @@ WIDTH = 1
 STEP = 1
 MIN_SUPPORT = 0.5
 MIN_CONFIDENCE = 0.5
-TAU = 0.6
+TAU = 0.70  # proposal Sec. 3.5.5 default
 
 
 def main() -> None:
@@ -54,23 +55,39 @@ def main() -> None:
         print(f"[2/4] Built {n_windows} sliding window(s) over snapshots {snaps}.")
 
         # 3. Mining ----------------------------------------------------------
-        _, rules = mine(
-            windowed, min_support=MIN_SUPPORT, min_confidence=MIN_CONFIDENCE
+        _, rules, candidates = mine_temporal(
+            windowed,
+            range(n_windows),
+            min_support=MIN_SUPPORT,
+            min_confidence=MIN_CONFIDENCE,
         )
         print(f"[3/4] Mined {rules.count()} per-window rule instance(s).")
 
         # 4. Temporal metrics ------------------------------------------------
-        metrics = compute_metrics(rules, n_windows=n_windows, tau=TAU)
+        metrics = compute_metrics(candidates, n_windows=n_windows, tau=TAU)
         print(f"[4/4] Temporal metrics for {metrics.count()} distinct rule(s):")
         metrics.select(
             "rule_key",
-            "occurrences",
+            "lifecycle",
             "temporal_support",
-            "mean_confidence",
             "confidence_drift",
-            "confidence_volatility",
             "persistence_score",
+            "confidence_series",
+            "occurrences",
         ).show(truncate=70, vertical=True)
+        json_path, csv_path = export_rules(
+            metrics,
+            ROOT / "results",
+            basename="sample_temporal_rules",
+            params={
+                "width": WIDTH,
+                "step": STEP,
+                "min_support": MIN_SUPPORT,
+                "min_confidence": MIN_CONFIDENCE,
+                "tau": TAU,
+            },
+        )
+        print(f"Wrote {json_path} and {csv_path}")
     finally:
         spark.stop()
 

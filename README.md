@@ -52,13 +52,24 @@ python3 scripts/ingest_samples.py
 
 ## Temporal metrics
 
-Computed per rule across the window sequence (see
-[`src/metrics/temporal.py`](src/metrics/temporal.py) for formal definitions):
+Computed per candidate rule over **all** windows `W` (proposal §3.5.5; see
+[`src/metrics/temporal.py`](src/metrics/temporal.py)). A rule is a candidate if
+it is frequent in at least one window; its support/confidence/lift are then
+recounted exactly in every window ([`recount_candidates`](src/mining/arm.py)),
+so a window where it was merely below threshold contributes its true value
+rather than zero.
 
-- **Temporal support** — time-averaged support `TS(r) = (1/n) Σ_w supp_w(r)`
-- **Temporal confidence drift** — net change `conf_last − conf_first`, its
-  per-step rate, and **confidence volatility** (mean |consecutive change|)
-- **Rule Persistence Score** — `RPS(r) = (1/n)·|{w : conf_w(r) ≥ τ}|`
+- **Temporal support** (Eq. 3.5) — `TempSupp(r) = (1/|W|) Σ_w supp_w(r)`
+- **Temporal confidence drift** (Eq. 3.6) — mean first difference
+  `Drift(r) = Σ_i [conf_{w_{i+1}}(r) − conf_{w_i}(r)] / (|W| − 1)`
+- **Rule Persistence Score** (Eq. 3.7) — `RPS(r) = (1/|W|)·|{w : conf_w(r) ≥ τ}|`, τ = 0.70
+
+Each rule is then given exactly one **lifecycle class** (Table 3.2 as amended,
+ε = 0.05, evaluated in order): transient (RPS < 0.2), emerging (Drift > ε),
+decaying (Drift < −ε), stable (|Drift| ≤ ε, RPS ≥ 0.5) and intermittent
+(|Drift| ≤ ε, 0.2 ≤ RPS < 0.5). The ranked rule set
+(class, metrics, full per-window trajectories) is written as JSON + CSV by
+[`src/metrics/export.py`](src/metrics/export.py).
 
 ## Baseline comparison (objective iv)
 

@@ -32,7 +32,8 @@ from pyspark.sql import functions as F  # noqa: E402
 from src.ingestion.ingest import ingest_snapshots  # noqa: E402
 from src.ingestion.spark_session import get_spark  # noqa: E402
 from src.metrics.temporal import compute_metrics  # noqa: E402
-from src.mining.arm import mine  # noqa: E402
+from src.metrics.export import export_rules  # noqa: E402
+from src.mining.arm import mine_temporal  # noqa: E402
 from src.windowing.sliding_window import (  # noqa: E402
     assign_windows,
     build_windows,
@@ -81,8 +82,10 @@ def main() -> None:
             print(f"  w{w.window_id} = {w.snapshots}")
 
         windowed = assign_windows(spark, triples, width=WIDTH, step=STEP)
-        _, rules = mine(windowed, min_support=MIN_SUPPORT, min_confidence=MIN_CONFIDENCE)
-        metrics = compute_metrics(rules, n_windows=n_windows, tau=TAU).cache()
+        _, _, candidates = mine_temporal(
+            windowed, range(n_windows), min_support=MIN_SUPPORT, min_confidence=MIN_CONFIDENCE
+        )
+        metrics = compute_metrics(candidates, n_windows=n_windows, tau=TAU).cache()
 
         n_rules = metrics.count()
         print(f"\nMined {n_rules} distinct type-evolution rule(s) across windows.")
@@ -94,18 +97,34 @@ def main() -> None:
         for r in rows:
             ante = ", ".join(_short(x) for x in r["antecedent"])
             cons = ", ".join(_short(x) for x in r["consequent"])
-            present_in = ", ".join(f"w{w}" for w in r["window_series"])
+            present_in = ", ".join(
+                f"w{w}" for w, e in zip(r["window_series"], r["emitted_series"]) if e
+            )
             conf_series = ", ".join(f"{c:.3f}" for c in r["confidence_series"])
-            kind = "PERSISTENT" if r["occurrences"] > 1 else "TRANSIENT"
             print(
                 f"  [{ante}] => [{cons}]\n"
-                f"      {kind}: present in [{present_in}] of {n_windows} windows | "
+                f"      {r['lifecycle'].upper()}: frequent in [{present_in}] of {n_windows} windows | "
                 f"confidence [{conf_series}] | "
                 f"drift={r['confidence_drift']:+.3f} | "
                 f"persistence={r['persistence_score']:.3f}"
             )
 
-        print(f"\nTotal wall time: {time.perf_counter() - start:.1f}s")
+        json_path, csv_path = export_rules(
+            metrics,
+            ROOT / "results",
+            basename="dbpedia_temporal_rules",
+            params={
+                "dataset": "dbpedia instance_types_en",
+                "snapshots": list(SNAPSHOTS),
+                "width": WIDTH,
+                "step": STEP,
+                "min_support": MIN_SUPPORT,
+                "min_confidence": MIN_CONFIDENCE,
+                "tau": TAU,
+            },
+        )
+        print(f"\nWrote {json_path} and {csv_path}")
+        print(f"Total wall time: {time.perf_counter() - start:.1f}s")
     finally:
         spark.stop()
 

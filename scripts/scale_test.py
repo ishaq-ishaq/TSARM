@@ -43,7 +43,7 @@ def _sensitivity_check(spark, dataset):
     """Run TSARM and return persistence of the injected persistent/transient rules."""
     from src.ingestion.ingest import ingest_snapshots
     from src.metrics.temporal import compute_metrics
-    from src.mining.arm import mine
+    from src.mining.arm import mine_temporal
     from src.windowing.sliding_window import (
         assign_windows,
         build_windows,
@@ -55,8 +55,10 @@ def _sensitivity_check(spark, dataset):
     snaps = ordered_snapshots(triples)
     n_windows = len(build_windows(snaps, width=1, step=1))
     windowed = assign_windows(spark, triples, width=1, step=1)
-    _, rules = mine(windowed, min_support=MIN_SUPPORT, min_confidence=MIN_CONFIDENCE)
-    metrics = compute_metrics(rules, n_windows=n_windows, tau=MIN_CONFIDENCE)
+    _, _, candidates = mine_temporal(
+        windowed, range(n_windows), min_support=MIN_SUPPORT, min_confidence=MIN_CONFIDENCE
+    )
+    metrics = compute_metrics(candidates, n_windows=n_windows, tau=MIN_CONFIDENCE)
 
     def persistence_of(rule):
         row = metrics.where(
@@ -64,7 +66,7 @@ def _sensitivity_check(spark, dataset):
             & (F.array_contains("consequent", rule["consequent"]))
             & (F.size("antecedent") == 1)
             & (F.size("consequent") == 1)
-        ).select("persistence_score", "confidence_drift").collect()
+        ).select("persistence_score", "confidence_drift", "lifecycle").collect()
         return row[0] if row else None
 
     return persistence_of(PERSISTENT_RULE), persistence_of(TRANSIENT_RULE)
@@ -113,12 +115,12 @@ def main() -> None:
             if persistent:
                 print(
                     f"  PERSISTENT rule  persistence={persistent['persistence_score']:.3f} "
-                    f"drift={persistent['confidence_drift']:+.3f}  (expect persistence high)"
+                    f"drift={persistent['confidence_drift']:+.3f} class={persistent['lifecycle']}  (expect persistence high)"
                 )
             if transient:
                 print(
                     f"  TRANSIENT  rule  persistence={transient['persistence_score']:.3f} "
-                    f"drift={transient['confidence_drift']:+.3f}  (expect persistence low / drift <= 0)"
+                    f"drift={transient['confidence_drift']:+.3f} class={transient['lifecycle']}  (expect persistence low / drift < 0)"
                 )
 
         print("\n## Scalability results\n")
