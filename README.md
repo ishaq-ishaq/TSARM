@@ -188,8 +188,8 @@ curl -L -o data/raw/dbpedia_2016-10_instance_types_en.ttl.bz2 \
   https://downloads.dbpedia.org/2016-10/core-i18n/en/instance_types_en.ttl.bz2
 ```
 
-Result on the M1 dev machine: **10.2 M real triples** ingested at ~151 k
-triples/s; 5.58 M distinct entities; 236 k entities whose type was *refined*
+Result on the Apple M5 Pro: **10.2 M real triples** ingested in 12.3 s
+(~831 k triples/s; 26 s end to end); 5.58 M distinct entities; 236 k entities whose type was *refined*
 between releases. Mining surfaces the type-evolution rule
 `type=owl:Thing ⇒ type=dbo:Person` (confidence 0.52, lift 4.57) — generic
 entities reclassified to a specific class across releases, the evolving-KG
