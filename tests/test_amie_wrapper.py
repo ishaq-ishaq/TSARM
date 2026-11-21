@@ -10,8 +10,8 @@ _spec.loader.exec_module(amie_mine)
 
 AMIE_STDOUT = """Assuming 9 as type relation
 Loading files...
-Starting the mining phase... Using 4 threads
-Rule\tHead Coverage\tStd Confidence\tPCA Confidence\tPositive Examples\tBody size\tPCA Body size\tFunctional variable
+Starting the mining phase... Rule\tHead Coverage\tStd Confidence\tPCA Confidence\tPositive Examples\tBody size\tPCA Body size\tFunctional variable
+Using 4 threads
 ?a  <http://ex.org/worksAt>  <http://ex.org/Org0>   => ?a  <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>  <http://ex.org/Class0>\t0.25\t0.8\t0.9\t40\t50\t44\t?a
 ?b  <http://ex.org/p>  ?a   => ?a  <http://ex.org/q>  ?b\t0.1\t0.5\t0.6\t10\t20\t17\t?a
 Mining done in 1.2 s

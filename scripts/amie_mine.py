@@ -17,6 +17,11 @@ Measures written to ``rules.csv``, aligned with the RDFRules wrapper:
 * ``pca_confidence``: AMIE's partial-completeness confidence (kept for
   reference).
 
+Constants are allowed in rule atoms (AMIE ``-const``) by default, matching
+RDFRules' default mining and TSARM's item model (``type=Class0 => worksAt=Org0``
+needs constants). Without them AMIE only mines variable-only rules, which for
+class/fact data like TSARM's yields none. Pass ``--no-constants`` to disable.
+
 Setup::
 
     # AMIE 3.5.1: https://github.com/dig-team/AMIE/releases (needs Java 8+)
@@ -72,12 +77,18 @@ def pool_to_tsv(inputs, tsv_path: Path) -> int:
 
 
 def parse_amie_output(text: str):
-    """Rules from AMIE stdout: header row ``Rule\\tHead Coverage\\t...`` then rows."""
+    """Rules from AMIE stdout: header ``Rule\\tHead Coverage\\t...`` then rule rows.
+
+    AMIE 3.5.1 prints the header on the same line as its progress message
+    (``Starting the mining phase... Rule\\tHead Coverage...``), so the header is
+    located by substring rather than at the start of a line.
+    """
     rules = []
     columns = None
     for line in text.splitlines():
-        if line.startswith("Rule\t"):
-            columns = [c.strip().lower() for c in line.split("\t")]
+        if "Rule\tHead Coverage" in line:
+            header = line[line.index("Rule\tHead Coverage"):]
+            columns = [c.strip().lower() for c in header.split("\t")]
             continue
         if columns is None or "=>" not in line:
             continue
@@ -110,6 +121,7 @@ def main() -> None:
     ap.add_argument("--min-confidence", type=float, default=0.1, help="min std confidence")
     ap.add_argument("--max-atoms", type=int, default=3, help="max rule length (AMIE -maxad)")
     ap.add_argument("--threads", type=int, default=os.cpu_count() or 4)
+    ap.add_argument("--no-constants", action="store_true", help="disable AMIE -const")
     ap.add_argument("--jar", default=os.environ.get("AMIE_JAR", str(DEFAULT_JAR)))
     ap.add_argument("--java", default=None, help="java binary (default: $JAVA_HOME/bin/java)")
     args = ap.parse_args()
@@ -134,8 +146,10 @@ def main() -> None:
             "-minc", str(args.min_confidence),
             "-maxad", str(args.max_atoms),
             "-nc", str(args.threads),
-            str(tsv),
         ]
+        if not args.no_constants:
+            cmd.append("-const")
+        cmd.append(str(tsv))
         proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr[-2000:])
