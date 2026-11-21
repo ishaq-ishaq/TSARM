@@ -62,6 +62,14 @@ def main() -> None:
     )
     ap.add_argument("--min-support", type=float)
     ap.add_argument("--min-confidence", type=float)
+    ap.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help="measured repetitions per system (proposal: 3). With >1, one extra "
+        "warm-up round is discarded and TSARM is compared with each baseline "
+        "using the Table 3.4 tests",
+    )
     args = ap.parse_args()
 
     mode = "synthetic" if args.synthetic else "sample"
@@ -89,7 +97,11 @@ def main() -> None:
             rdfrules_baseline(min_support=min_support, min_confidence=min_confidence),
             amie_baseline(min_support=min_support, min_confidence=min_confidence),
         ]
-        results = run_benchmark(baselines, [dataset])
+        if args.repeats > 1:
+            print("Warm-up round (discarded) ...", flush=True)
+            run_benchmark(baselines, [dataset])
+        rounds = [run_benchmark(baselines, [dataset]) for _ in range(max(1, args.repeats))]
+        results = rounds[-1]
 
         print("\n## Benchmark comparison\n")
         print(to_markdown(results))
@@ -102,10 +114,58 @@ def main() -> None:
         csv_path = RESULTS / f"benchmark_{mode}.csv"
         to_csv(results, csv_path)
         print(f"\nWrote {csv_path}")
+
+        if args.repeats > 1:
+            _write_repeats(rounds, mode)
     finally:
         spark.stop()
         if tmp_ctx is not None:
             tmp_ctx.cleanup()
+
+
+def _write_repeats(rounds, mode: str) -> None:
+    """Per-run CSV plus paired TSARM-vs-baseline runtime tests (Table 3.4)."""
+    import csv
+
+    from src.evaluation.stats import compare_paired
+
+    runs_path = RESULTS / f"benchmark_{mode}_runs.csv"
+    with open(runs_path, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["repeat", "system", "status", "runtime_sec", "n_rules", "mean_confidence"])
+        for i, rnd in enumerate(rounds, 1):
+            for r in rnd:
+                w.writerow([i, r.system, r.status, r.runtime_sec, r.n_rules, r.mean_confidence])
+    print(f"Wrote {runs_path}")
+
+    def runtimes(system):
+        vals = [
+            next((r.runtime_sec for r in rnd if r.system == system and r.status == "ok"), None)
+            for rnd in rounds
+        ]
+        return vals if all(v is not None for v in vals) else None
+
+    tsarm = runtimes("TSARM")
+    systems = sorted({r.system for rnd in rounds for r in rnd} - {"TSARM"})
+    rows = []
+    for system in systems:
+        base = runtimes(system)
+        if tsarm is None or base is None:
+            continue
+        c = compare_paired(tsarm, base, metric=f"runtime_sec: TSARM vs {system}")
+        rows.append(c.as_dict())
+        print(
+            f"\n{c.metric}: {c.mean_tsarm:.1f}s vs {c.mean_baseline:.1f}s | {c.test} "
+            f"p={c.p_value if c.p_value is None else round(c.p_value, 4)} | "
+            f"{c.effect_size_name}={c.effect_size:.2f}" + (f" | {c.note}" if c.note else "")
+        )
+    if rows:
+        stats_path = RESULTS / f"benchmark_{mode}_stats.csv"
+        with open(stats_path, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows(rows)
+        print(f"Wrote {stats_path}")
 
 
 if __name__ == "__main__":
