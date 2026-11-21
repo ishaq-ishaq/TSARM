@@ -18,7 +18,7 @@ from src.evaluation.synthetic import (
 from src.ingestion.ingest import ingest_snapshots
 from src.ingestion.spark_session import get_spark
 from src.metrics.temporal import compute_metrics
-from src.mining.arm import mine
+from src.mining.arm import mine_temporal
 from src.windowing.sliding_window import (
     assign_windows,
     build_windows,
@@ -70,8 +70,10 @@ def test_injected_patterns_recovered_by_metrics(spark, tmp_path):
     snaps = ordered_snapshots(triples)
     n_windows = len(build_windows(snaps, width=1, step=1))
     windowed = assign_windows(spark, triples, width=1, step=1)
-    _, rules = mine(windowed, min_support=0.05, min_confidence=0.5)
-    metrics = compute_metrics(rules, n_windows=n_windows, tau=0.5)
+    _, _, candidates = mine_temporal(
+        windowed, range(n_windows), min_support=0.05, min_confidence=0.5
+    )
+    metrics = compute_metrics(candidates, n_windows=n_windows, tau=0.5)
 
     def find(rule):
         rows = metrics.where(
@@ -93,3 +95,10 @@ def test_injected_patterns_recovered_by_metrics(spark, tmp_path):
     # persistent rule (it holds only in the first transient_until snapshots).
     transient_persistence = transient["persistence_score"] if transient else 0.0
     assert transient_persistence < persistent["persistence_score"]
+
+    # Lifecycle (Table 3.2): the persistent rule is stable; the transient rule
+    # loses confidence once its pattern stops, so its drift is negative.
+    assert persistent["lifecycle"] == "stable"
+    assert transient is not None
+    assert transient["confidence_drift"] < -0.05
+    assert transient["lifecycle"] == "decaying"

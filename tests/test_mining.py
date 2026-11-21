@@ -6,7 +6,13 @@ import pytest
 from pyspark.sql import types as T
 
 from src.ingestion.spark_session import get_spark
-from src.mining.arm import build_transactions, mine, mine_rules
+from src.mining.arm import (
+    build_transactions,
+    mine,
+    mine_rules,
+    mine_temporal,
+    recount_candidates,
+)
 from src.windowing.sliding_window import assign_windows
 
 _WINDOWED_SCHEMA = T.StructType(
@@ -157,3 +163,105 @@ def test_mine_end_to_end_through_windowing(spark):
     windowed = assign_windows(spark, triples, width=1, step=1)
     _, rules = mine(windowed, min_support=0.5, min_confidence=0.5)
     assert rules.count() >= 1
+
+
+# ---------------------------------------------------------------------------
+# Candidate recount (proposal Sec. 3.5.4): true per-window measures everywhere
+# ---------------------------------------------------------------------------
+
+_TX_SCHEMA = T.StructType(
+    [
+        T.StructField("window_id", T.IntegerType(), False),
+        T.StructField("subject", T.StringType(), False),
+        T.StructField("items", T.ArrayType(T.StringType()), False),
+    ]
+)
+
+
+def test_recount_matches_fpgrowth_and_fills_non_frequent_windows(spark):
+    # Window 0: A=>B holds for 3/4 entities with A (frequent at minSupport 0.5).
+    # Window 1: A present in 4 entities, B with only 1 of them -> conf 0.25,
+    #           so FP-Growth (minConfidence 0.6) does not emit A=>B there.
+    # Window 2: no transactions at all.
+    tx = spark.createDataFrame(
+        [
+            (0, "e1", ["A", "B"]),
+            (0, "e2", ["A", "B"]),
+            (0, "e3", ["A", "B"]),
+            (0, "e4", ["A"]),
+            (1, "e1", ["A", "B"]),
+            (1, "e2", ["A"]),
+            (1, "e3", ["A"]),
+            (1, "e4", ["A"]),
+            (1, "e5", ["B"]),
+        ],
+        schema=_TX_SCHEMA,
+    )
+    _, rules = mine_rules(tx, min_support=0.5, min_confidence=0.6)
+    dense = recount_candidates(tx, rules, window_ids=[0, 1, 2])
+    rows = {
+        r.window_id: r
+        for r in dense.where("rule_key = 'A => B'").collect()
+    }
+    assert set(rows) == {0, 1, 2}
+
+    # Window 0 equals what FP-Growth reported.
+    fp = rules.where("rule_key = 'A => B' AND window_id = 0").collect()[0]
+    assert rows[0].emitted is True
+    assert rows[0].support == pytest.approx(fp.support)  # 3/4
+    assert rows[0].confidence == pytest.approx(fp.confidence)  # 3/4
+    assert rows[0].lift == pytest.approx(fp.lift)  # 0.75 / 0.75 = 1.0
+
+    # Window 1: not emitted, but measured: N=5, n(A)=4, n(B)=2, n(AB)=1.
+    assert rows[1].emitted is False
+    assert rows[1].n_transactions == 5
+    assert rows[1].antecedent_count == 4
+    assert rows[1].consequent_count == 2
+    assert rows[1].rule_count == 1
+    assert rows[1].support == pytest.approx(1 / 5)
+    assert rows[1].confidence == pytest.approx(1 / 4)
+    assert rows[1].lift == pytest.approx((1 / 4) / (2 / 5))
+
+    # Window 2: empty -> all zero, no division errors.
+    assert rows[2].n_transactions == 0
+    assert rows[2].support == 0.0 and rows[2].confidence == 0.0
+    assert rows[2].lift == 0.0 and rows[2].emitted is False
+
+
+def test_recount_multi_item_antecedent(spark):
+    tx = spark.createDataFrame(
+        [
+            (0, "e1", ["A", "B", "C"]),
+            (0, "e2", ["A", "B", "C"]),
+            (0, "e3", ["A", "B"]),
+            (0, "e4", ["C"]),
+        ],
+        schema=_TX_SCHEMA,
+    )
+    _, rules = mine_rules(tx, min_support=0.5, min_confidence=0.6)
+    dense = recount_candidates(tx, rules, window_ids=[0])
+    r = dense.where("rule_key = 'A,B => C'").collect()[0]
+    assert r.antecedent_count == 3 and r.rule_count == 2
+    assert r.confidence == pytest.approx(2 / 3)
+
+
+def test_mine_temporal_returns_dense_candidates(spark):
+    df = _windowed(
+        spark,
+        [
+            ("Alice", TYPE, ENGINEER, "iri", 0),
+            ("Alice", WORKS, ACME, "iri", 0),
+            ("Bob", TYPE, ENGINEER, "iri", 0),
+            ("Bob", WORKS, ACME, "iri", 0),
+            ("Alice", TYPE, ENGINEER, "iri", 1),
+            ("Bob", TYPE, ENGINEER, "iri", 1),
+        ],
+    )
+    _, rules, cands = mine_temporal(
+        df, window_ids=[0, 1], min_support=0.5, min_confidence=0.6
+    )
+    key = f"{TYPE}={ENGINEER} => {WORKS}={ACME}"
+    got = {r.window_id: r for r in cands.where(cands.rule_key == key).collect()}
+    assert got[0].confidence == pytest.approx(1.0) and got[0].emitted
+    # Window 1: Engineers no longer work at Acme -> measured confidence 0.
+    assert got[1].confidence == pytest.approx(0.0) and not got[1].emitted
