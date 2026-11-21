@@ -343,27 +343,59 @@ def recount_candidates(
     )
 
 
+ITEM_MODES = ("fact", "class")
+
+
 def mine_temporal(
     windowed_df: DataFrame,
     window_ids: Sequence[int],
     min_support: float = 0.3,
     min_confidence: float = 0.6,
     include_literals: bool = False,
+    item_mode: str = "fact",
+    include_superclasses: bool = True,
 ) -> Tuple[DataFrame, DataFrame, DataFrame]:
     """Per-window mining plus the candidate recount the temporal metrics need.
 
+    Args:
+        item_mode: ``"fact"``: items are ``predicate=object`` facts
+            (:func:`build_transactions`). ``"class"``: items are the entity's
+            ontological classes plus, with ``include_superclasses``, all their
+            ancestors (Algorithm 3.1; :mod:`src.mining.semantic_items`).
+            Taxonomic rules implied by the hierarchy are then removed.
+
     Returns:
-        ``(itemsets, rules, candidates)`` -- ``itemsets``/``rules`` as from
-        :func:`mine_rules` (only windows where each rule was frequent), and
-        ``candidates`` the dense per-window table from
-        :func:`recount_candidates`, which is the input
+        ``(itemsets, rules, candidates)``. ``itemsets`` and ``rules`` are as
+        from :func:`mine_rules` (only windows where each rule was frequent);
+        ``candidates`` is the dense per-window table from
+        :func:`recount_candidates`, the input that
         :func:`src.metrics.temporal.compute_metrics` expects.
     """
-    transactions = build_transactions(
-        windowed_df, include_literals=include_literals
-    ).cache()
+    if item_mode not in ITEM_MODES:
+        raise ValueError(f"item_mode must be one of {ITEM_MODES}, got {item_mode!r}")
+    closure = None
+    if item_mode == "class":
+        from src.mining.semantic_items import (
+            build_class_transactions,
+            subclass_closure_spark,
+            subclass_edges,
+        )
+
+        if include_superclasses:
+            closure = subclass_closure_spark(subclass_edges(windowed_df)).cache()
+        transactions = build_class_transactions(
+            windowed_df, include_superclasses=include_superclasses, closure=closure
+        ).cache()
+    else:
+        transactions = build_transactions(
+            windowed_df, include_literals=include_literals
+        ).cache()
     itemsets, rules = mine_rules(
         transactions, min_support=min_support, min_confidence=min_confidence
     )
+    if closure is not None:
+        from src.mining.semantic_items import drop_taxonomic_rules
+
+        rules = drop_taxonomic_rules(rules, closure)
     candidates = recount_candidates(transactions, rules, window_ids)
     return itemsets, rules, candidates
