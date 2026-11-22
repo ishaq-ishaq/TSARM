@@ -70,6 +70,7 @@ for entry in "${SNAPSHOTS[@]}"; do
       if command -v lbzip2 >/dev/null; then
         lbzip2 -dc "$file" | "$PYTHON" "$REPO/scripts/extract_wikidata.py" --input - --format xml --out "$out.part" --workers "$WORKERS"
       else
+        echo "   WARNING: lbzip2 not found, decompressing on one core (slow). Install it: brew install lbzip2 (Mac) / sudo apt install lbzip2"
         "$PYTHON" "$REPO/scripts/extract_wikidata.py" --input "$file" --format xml --out "$out.part" --workers "$WORKERS"
       fi ;;
     *.json.gz)

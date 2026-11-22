@@ -205,3 +205,113 @@ def test_read_statements_into_spark(tmp_path):
         assert bce.point_in_time == "-0500-01-01" and bce.valid_from is None
     finally:
         spark.stop()
+
+
+# --- Snapshot loading and the end-to-end Wikidata driver --------------------
+
+
+def _item(qid, p31=(), p279=(), ended=None):
+    """Entity JSON; ``ended`` = {class: end date} adds P582 to that P31 statement."""
+    ended = ended or {}
+    claims = {}
+    if p31:
+        claims["P31"] = [
+            _statement("P31", c, qualifiers={"P582": _time(f"+{ended[c]}T00:00:00Z")} if c in ended else None)
+            for c in p31
+        ]
+    if p279:
+        claims["P279"] = [_statement("P279", c) for c in p279]
+    return {"type": "item", "id": qid, "claims": claims}
+
+
+def _write_snapshot(path, entities):
+    from src.ingestion.wikidata import header, write_rows
+
+    with gzip.open(path, "wt") as fh:
+        fh.write(header())
+        for e in entities:
+            write_rows(extract_entity(e), fh)
+
+
+# Writers (Q100 ⊑ Q200 artist) who are award winners (Q300): all of them in
+# 2017, half in 2018, two in 2019 -> the rule Q100 => Q300 decays.
+def _series(tmp_path):
+    hierarchy = [_item("Q100", p279=["Q200"]), _item("Q200", p279=["Q900"])]
+    winners = {"2017-01": range(20), "2018-01": range(10), "2019-01": range(2)}
+    for snap, keep in winners.items():
+        ents = list(hierarchy)
+        for i in range(20):
+            ents.append(_item(f"Q{1000 + i}", p31=["Q100", "Q300"] if i in keep else ["Q100"]))
+        for i in range(10):
+            ents.append(_item(f"Q{2000 + i}", p31=["Q400"]))
+        _write_snapshot(tmp_path / f"{snap}.tsv.gz", ents)
+    return tmp_path
+
+
+def test_snapshot_ts_from_name():
+    from src.ingestion.wikidata import snapshot_ts_from_name
+
+    assert snapshot_ts_from_name("2017-01.tsv.gz") == datetime(2017, 1, 1)
+    assert snapshot_ts_from_name("2021-01-20") == datetime(2021, 1, 20)
+    with pytest.raises(ValueError):
+        snapshot_ts_from_name("latest.tsv.gz")
+
+
+def test_load_snapshots_filters(tmp_path):
+    from src.ingestion.spark_session import get_spark
+    from src.ingestion.wikidata import load_snapshots
+
+    _write_snapshot(tmp_path / "a.tsv.gz", [
+        ENTITY_A,  # one preferred + one normal P31 -> only the preferred is best-rank
+        _item("Q7", p31=["Q5", "Q6"], ended={"Q6": "2010-01-01"}),  # Q6 ended before the snapshot
+        _item("Q8", p279=["Q9"]),
+    ] + [_item(f"Q{100 + i}", p31=["Q5"]) for i in range(400)])
+    snaps = {"2017-01": (tmp_path / "a.tsv.gz", datetime(2017, 1, 1))}
+    spark = get_spark(app_name="TSARM-wikidata-tests", master="local[2]")
+    try:
+        def objs(df, subject):
+            return {r.object.rsplit("/", 1)[-1] for r in df.where(df.subject == ENTITY_NS + subject).collect()}
+
+        truthy = load_snapshots(spark, snaps)
+        assert objs(truthy, "Q42") == {"Q5"}
+        assert objs(load_snapshots(spark, snaps, best_rank_only=False), "Q42") == {"Q5", "Q36180"}
+        assert objs(truthy, "Q7") == {"Q5", "Q6"}
+        assert objs(load_snapshots(spark, snaps, valid_at_snapshot=True), "Q7") == {"Q5"}
+
+        sampled = load_snapshots(spark, snaps, sample_fraction=0.25)
+        n_p31 = sampled.where(sampled.predicate == DIRECT_NS + "P31").select("subject").distinct().count()
+        assert 50 < n_p31 < 160  # ~25% of 402 instances
+        assert objs(sampled, "Q8") == {"Q9"}  # hierarchy edges are never sampled away
+        again = load_snapshots(spark, snaps, sample_fraction=0.25)
+        assert {r.subject for r in sampled.collect()} == {r.subject for r in again.collect()}
+        with pytest.raises(ValueError):
+            load_snapshots(spark, snaps, sample_fraction=0)
+    finally:
+        spark.stop()
+
+
+def test_wikidata_driver_end_to_end(tmp_path):
+    (tmp_path / "wd").mkdir()
+    data = _series(tmp_path / "wd")
+    out = tmp_path / "results"
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "run_wikidata_temporal.py"),
+         "--data-dir", str(data), "--out", str(out), "--tag", "test",
+         "--min-support", "0.1", "--min-confidence", "0.3", "--master", "local[2]"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    report = json.loads((out / "wikidata_temporal_rules_test.json").read_text())
+    rules = {
+        (tuple(_s.rsplit("/", 1)[-1] for _s in r["antecedent"]),
+         tuple(_s.rsplit("/", 1)[-1] for _s in r["consequent"])): r
+        for r in report["rules"]
+    }
+    writer_award = rules[(("Q100",), ("Q300",))]
+    assert writer_award["confidence_series"] == pytest.approx([1.0, 0.5])
+    assert writer_award["lifecycle"] == "decaying"
+    # depth 1: the direct superclass Q200 is an item, Q900 (two hops) is not
+    assert (("Q200",), ("Q300",)) in rules
+    assert not any("Q900" in a + c for a, c in rules)
+    assert (("Q100",), ("Q200",)) not in rules  # taxonomic rule pruned
+    assert report["params"]["windows"] == [["2017-01", "2018-01"], ["2018-01", "2019-01"]]

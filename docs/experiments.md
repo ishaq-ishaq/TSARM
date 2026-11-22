@@ -133,8 +133,32 @@ bash scripts/download_wikidata.sh           # remaining six snapshots
 ```
 
 See `docs/wikidata_data_plan.md`. Output:
-`data/processed/wikidata/<snapshot>.tsv.gz`, loaded with
-`src.ingestion.wikidata.read_statements`.
+`data/processed/wikidata/<snapshot>.tsv.gz`. Then mine it, starting with a
+1% entity sample to check memory and runtime:
+
+```bash
+python3 scripts/run_wikidata_temporal.py --sample 0.01 --tag s001
+python3 scripts/run_wikidata_temporal.py --sample 0.1  --tag s010
+python3 scripts/run_wikidata_temporal.py               --tag full
+# with only some snapshots downloaded so far:
+python3 scripts/run_wikidata_temporal.py --snapshots 2022-01,2026-11 --width 1 --sample 0.01
+```
+
+- **Protocol:** best-rank ("truthy") P31/P279 statements; class items with
+  P279 ancestors up to `--superclass-depth` hops (default 1; Wikidata's
+  hierarchy is too deep for the full closure, see below); windows of 2
+  consecutive snapshots, step 1; σ = 0.01, minimum confidence 0.50, τ = 0.70.
+  The sample is a hash of the entity IRI, so the same entities are kept in
+  every snapshot; P279 edges are never sampled away.
+- **Why limit the depth:** an ancestor always co-occurs with its subclass, so
+  with *k* ancestors every one of the 2^k subsets is a frequent itemset.
+  Taxonomic rules are pruned after mining, so this cost cannot be avoided
+  later. Try `--superclass-depth 2` on the 1% sample before using it at full size.
+- **Options:** `--valid-at-snapshot` drops statements whose P580/P582 dates
+  exclude the snapshot date; `--all-ranks` keeps normal-rank statements that
+  are not best-rank.
+- **Outputs:** `results/wikidata_temporal_rules_<tag>.{json,csv}` with
+  parameters, statement counts, stage timings and the hardware fingerprint.
 
 ## Fixed parameters
 
