@@ -88,6 +88,8 @@ def main() -> None:
     ap.add_argument("--superclass-depth", type=int, default=-1, help="-1 = full closure (DBpedia's ontology is shallow)")
     ap.add_argument("--class-namespace", default="http://dbpedia.org/ontology/",
                     help="keep only hierarchy edges within this namespace ('' = keep all)")
+    ap.add_argument("--miner", choices=["auto", "fpgrowth", "bounded"], default="auto",
+                    help="auto: bounded (ancestor-pruned, <= 3 items) for class items with superclasses, else FP-Growth")
     ap.add_argument("--tag", default="")
     args = ap.parse_args()
 
@@ -127,6 +129,7 @@ def main() -> None:
         _, _, candidates = mine_temporal(
             windowed, range(n_windows), min_support=args.min_support, min_confidence=args.min_confidence,
             item_mode=args.item_mode, include_superclasses=depth != 0, superclass_depth=depth or None,
+            miner=args.miner,
         )
         metrics = compute_metrics(candidates, n_windows=n_windows, tau=args.tau).cache()
         n_rules = metrics.count()
@@ -156,7 +159,7 @@ def main() -> None:
                 "triples_per_release": {r: per_release.get(r, 0) - n_edges for r in releases},
                 "width": args.width, "step": args.step,
                 "min_support": args.min_support, "min_confidence": args.min_confidence, "tau": args.tau,
-                "item_mode": args.item_mode,
+                "item_mode": args.item_mode, "miner": args.miner,
                 "ontology": args.ontology.name if args.item_mode == "class" else None,
                 "ontology_subclass_edges": n_edges or None,
                 "class_namespace": args.class_namespace if args.item_mode == "class" else None,

@@ -238,6 +238,32 @@ therefore classifies it as an *emerging* rule, the temporal significance signal
 evolving-KG data. Zero-padding absent windows would misreport this rule as
 transient.
 
+#### Class items with the DBpedia ontology
+
+With `--item-mode class`, each entity's items are its classes plus their
+ancestors in the DBpedia ontology's own hierarchy (710 classes, depth 6;
+schema.org/DOLCE mappings excluded):
+
+```bash
+bash scripts/download_dbpedia.sh        # releases + ontology (Databus, Wayback fallback)
+python3 scripts/run_dbpedia_temporal.py --item-mode class --tag class_dbo_full
+```
+
+Class items are mined by a level-wise miner ([`src/mining/generalized.py`](src/mining/generalized.py))
+that caps itemsets at three items and never builds an itemset holding a class
+together with one of its ancestors (Srikant & Agrawal, 1995). Such itemsets are
+redundant, and Spark's FP-Growth can neither skip them nor cap their length.
+Without a hierarchy the miner returns exactly FP-Growth's rules (tested). On the
+three releases it finds generalised rules such as `owl:Thing ⇒ Agent`, whose
+confidence rises from 0.302 to 0.353.
+
+#### Valid-time windows
+
+[`scripts/run_wikidata_temporal.py`](scripts/run_wikidata_temporal.py) can also
+window one dump by the *valid time* of its statements (Wikidata P580/P582/P585),
+with calendar windows `[t, t+δ)`:
+`--snapshots 2026-11 --valid-time 1975-01,2025-01,60,60`.
+
 ## Install / reproducibility
 
 ```bash
