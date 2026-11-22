@@ -44,7 +44,7 @@ defined over the full window set, so this dense table is what
 
 from __future__ import annotations
 
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from pyspark.ml.fpm import FPGrowth
 from pyspark.sql import Column, DataFrame
@@ -354,6 +354,7 @@ def mine_temporal(
     include_literals: bool = False,
     item_mode: str = "fact",
     include_superclasses: bool = True,
+    superclass_depth: Optional[int] = None,
 ) -> Tuple[DataFrame, DataFrame, DataFrame]:
     """Per-window mining plus the candidate recount the temporal metrics need.
 
@@ -363,6 +364,11 @@ def mine_temporal(
             ontological classes plus, with ``include_superclasses``, all their
             ancestors (Algorithm 3.1; :mod:`src.mining.semantic_items`).
             Taxonomic rules implied by the hierarchy are then removed.
+        superclass_depth: In class mode, how many ``subClassOf`` hops of
+            ancestors to add (``1`` = direct parents only); ``None`` = the full
+            closure. A large, deep hierarchy such as Wikidata's needs a limit:
+            ancestors always co-occur with their subclass, so every subset of a
+            long ancestor chain is a frequent itemset for FP-Growth.
 
     Returns:
         ``(itemsets, rules, candidates)``. ``itemsets`` and ``rules`` are as
@@ -382,7 +388,10 @@ def mine_temporal(
         )
 
         if include_superclasses:
-            closure = subclass_closure_spark(subclass_edges(windowed_df)).cache()
+            if superclass_depth is not None and superclass_depth < 1:
+                raise ValueError("superclass_depth must be >= 1 (or None for the full closure)")
+            rounds = 64 if superclass_depth is None else superclass_depth - 1
+            closure = subclass_closure_spark(subclass_edges(windowed_df), max_depth=rounds).cache()
         transactions = build_class_transactions(
             windowed_df, include_superclasses=include_superclasses, closure=closure
         ).cache()

@@ -310,3 +310,68 @@ def read_statements(spark, path, snapshot: str, snapshot_ts):
         "end_time",
         "point_in_time",
     )
+
+
+def snapshot_ts_from_name(name: str):
+    """``2017-01`` or ``2017-01-20`` (file stem) -> datetime of that day (1st if no day)."""
+    from datetime import datetime
+
+    stem = name.split(".")[0]
+    for fmt in ("%Y-%m-%d", "%Y-%m"):
+        try:
+            return datetime.strptime(stem, fmt)
+        except ValueError:
+            pass
+    raise ValueError(f"Cannot read a snapshot date from {name!r} (expected YYYY-MM[-DD].tsv.gz)")
+
+
+def load_snapshots(
+    spark,
+    snapshots,
+    best_rank_only: bool = True,
+    sample_fraction: Optional[float] = None,
+    valid_at_snapshot: bool = False,
+):
+    """Union several extracted snapshots, ready for windowing and mining.
+
+    Args:
+        snapshots: ``snapshot_id -> (tsv path, snapshot datetime)``.
+        best_rank_only: Keep only best-rank statements (Wikidata's "truthy"
+            view). Deprecated statements are dropped either way.
+        sample_fraction: Keep this fraction of *instances* (P31 subjects),
+            chosen by a hash of the entity IRI so the same entities are kept in
+            every snapshot. Subclass (P279) edges are always kept, so the class
+            hierarchy stays complete. ``None`` keeps everything.
+        valid_at_snapshot: Drop statements whose valid-time qualifiers say they
+            did not hold on the snapshot date (``valid_to`` before it, or
+            ``valid_from`` after it). Statements without qualifiers are kept.
+    """
+    from functools import reduce
+
+    from pyspark.sql import functions as F
+
+    if not snapshots:
+        raise ValueError("No snapshots given.")
+    frames = []
+    for snap, (path, ts) in snapshots.items():
+        df = read_statements(spark, path, snap, ts)
+        if best_rank_only:
+            df = df.where(F.col("best_rank"))
+        else:
+            df = df.where(F.col("rank") != "deprecated")
+        if valid_at_snapshot:
+            day = F.to_date(F.col("snapshot_ts"))
+            df = df.where(
+                (F.col("valid_to").isNull() | (F.col("valid_to") >= day))
+                & (F.col("valid_from").isNull() | (F.col("valid_from") <= day))
+            )
+        if sample_fraction is not None:
+            if not 0 < sample_fraction <= 1:
+                raise ValueError("sample_fraction must be in (0, 1].")
+            bucket = F.pmod(F.xxhash64("subject"), F.lit(1_000_000))
+            df = df.where(
+                (F.col("predicate") != DIRECT_NS + "P31")
+                | (bucket < F.lit(int(sample_fraction * 1_000_000)))
+            )
+        frames.append(df)
+    return reduce(lambda a, b: a.unionByName(b), frames)

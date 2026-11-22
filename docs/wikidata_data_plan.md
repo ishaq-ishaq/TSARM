@@ -111,12 +111,28 @@ downloads with resume (re-run it after a dropped connection), verifies the size,
 extracts the class statements into `data/processed/wikidata/<snapshot>.tsv.gz`,
 and deletes the raw dump (set `KEEP_RAW=1` to keep it).
 
+On the Mac, install the parallel decompressors first. Without `lbzip2`
+the `.xml.bz2` snapshots are decompressed on a single core, which is many
+times slower:
+
 ```bash
-cd ~/TSARM                                    # or the project folder on the Mac
-bash scripts/download_wikidata.sh 2026-11     # the expiring one first
-bash scripts/download_wikidata.sh             # then all the rest
+brew install lbzip2 pigz
+```
+
+Then, with the Mac plugged in (`caffeinate -i` stops it sleeping mid-download):
+
+```bash
+cd ~/Documents/Projects/TSARM                          # the project folder
+caffeinate -i bash scripts/download_wikidata.sh 2026-11  # the expiring one first
+caffeinate -i bash scripts/download_wikidata.sh          # then all the rest
 ```
 
 Raw dumps go to `~/wikidata-raw` (`RAW_DIR=...` to change). Only one raw dump
 is on disk at a time, so the peak disk use is about 160 GB. On the Oracle VM,
 first install the multi-core decompressors: `sudo apt install lbzip2 pigz`.
+
+## After the download
+
+Mine the extracted snapshots with `scripts/run_wikidata_temporal.py`; start
+with a 1% sample (`--sample 0.01`). See `docs/experiments.md` for the protocol
+and options.

@@ -127,3 +127,22 @@ def test_class_mining_finds_semantic_rule_and_drops_taxonomic_ones(spark):
 def test_rejects_unknown_item_mode(spark):
     with pytest.raises(ValueError):
         mine_temporal(_df(spark, _ontology_rows(0)), [0], item_mode="nonsense")
+
+
+def test_superclass_depth_limits_ancestors(spark):
+    rows = _ontology_rows(0)
+    for i in range(5):
+        rows.append((f"p{i}", RDF_TYPE, PHYS, "iri", 0))
+        rows.append((f"p{i}", RDF_TYPE, AWARD, "iri", 0))
+    for i in range(3):
+        rows.append((f"o{i}", RDF_TYPE, ORG, "iri", 0))
+    _, rules, _ = mine_temporal(
+        _df(spark, rows), [0], min_support=0.2, min_confidence=0.6,
+        item_mode="class", superclass_depth=1,
+    )
+    keys = {r.rule_key for r in rules.collect()}
+    # depth 1: Physicist gains Scientist (direct parent) but not Person / Agent.
+    assert f"{PHYS} => {AWARD}" in keys and f"{SCI} => {AWARD}" in keys
+    assert f"{PERSON} => {AWARD}" not in keys
+    with pytest.raises(ValueError):
+        mine_temporal(_df(spark, rows), [0], item_mode="class", superclass_depth=0)
