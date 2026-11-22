@@ -50,7 +50,7 @@ Further rules for judging:
 ## 3. Merge and adjudicate
 
 Paste both annotators' columns into one sheet. For every row where `judge_a`
-and `judge_b` disagree, the two annotators (or the supervisor) discuss the rule
+and `judge_b` disagree, the two annotators (or a third adjudicator) discuss the rule
 and write the agreed mark in `final`. Leave `final` empty where they agree.
 
 ## 4. Score
