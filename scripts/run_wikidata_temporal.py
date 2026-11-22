@@ -95,6 +95,8 @@ def main() -> None:
                     help="with --valid-time: keep statements without dates in every window, or drop them")
     ap.add_argument("--master", default="local[*]")
     ap.add_argument("--out", type=Path, default=ROOT / "results")
+    ap.add_argument("--miner", choices=["auto", "fpgrowth", "bounded"], default="auto",
+                    help="auto: bounded (ancestor-pruned, <= 3 items) for class items with superclasses, else FP-Growth")
     ap.add_argument("--tag", default="", help="suffix for the output file names")
     ap.add_argument("--top", type=int, default=5, help="rules to print per lifecycle class")
     args = ap.parse_args()
@@ -149,7 +151,7 @@ def main() -> None:
             windowed, range(len(windows)),
             min_support=args.min_support, min_confidence=args.min_confidence,
             item_mode="class", include_superclasses=depth != 0,
-            superclass_depth=depth if depth else None,
+            superclass_depth=depth if depth else None, miner=args.miner,
         )
         metrics = compute_metrics(candidates, n_windows=len(windows), tau=args.tau).cache()
         n_rules = metrics.count()
@@ -182,7 +184,7 @@ def main() -> None:
                 "valid_time": args.valid_time, "unqualified": args.unqualified if args.valid_time else None,
                 "width": args.width, "step": args.step,
                 "min_support": args.min_support, "min_confidence": args.min_confidence,
-                "tau": args.tau, "superclass_depth": args.superclass_depth,
+                "tau": args.tau, "superclass_depth": args.superclass_depth, "miner": args.miner,
                 "best_rank_only": not args.all_ranks, "valid_at_snapshot": args.valid_at_snapshot,
                 "sample_fraction": args.sample, "master": args.master,
                 "lifecycle_counts": dict(by_class),
