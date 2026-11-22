@@ -52,9 +52,13 @@ python3 scripts/core_scaling.py --mode weak   --cores 1,2,4,8,15 --entities 1500
 
 ## E2: Scalability across cluster nodes
 
-*Proposal §3.7.3 i, multi-node. Oracle Cloud Always Free, 4 × (1 OCPU, 6 GB).*
+*Proposal §3.7.3 i, multi-node.* Two equivalent options:
 
-Follow `docs/oracle_cluster.md` Phase B. Command on the master:
+- Google Cloud free trial, 4 × e2-standard-2 (2 vCPU, 8 GB): `docs/gcp.md` Phase B
+  (`--cores 1,2,4,8 --entities 1500000`, the same 12M triples as E1).
+- Oracle Cloud Always Free, 4 × (1 OCPU, 6 GB): `docs/oracle_cluster.md` Phase B.
+
+Oracle command on the master:
 
 ```bash
 TSARM_DRIVER_MEMORY=1g python3 scripts/core_scaling.py --master-url spark://<master>:7077 \
@@ -62,8 +66,8 @@ TSARM_DRIVER_MEMORY=1g python3 scripts/core_scaling.py --master-url spark://<mas
 ```
 
 - **Outputs:** `results/cluster_scaling_strong_*`; runs record `executors_granted`.
-- **Status:** code validated on a local standalone cluster; waiting for the
-  Oracle account.
+- **Status:** code validated on a local standalone cluster; waiting for a
+  cloud account (Google Cloud or Oracle).
 
 ## E3: Rule quality against a reference set
 
