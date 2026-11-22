@@ -13,8 +13,8 @@ reference event list is "the transient rule *decays* at snapshot
 For Wikidata the same functions take hand-validated reference files instead
 (``load_reference_rules``).
 
-E3 compares TSARM's rule set with AMIE's (pooled graph) when ``$AMIE_JAR`` /
-``tools/amie`` is available. E4 applies to TSARM only: the static baselines
+E3 compares TSARM's rule set with AMIE's and RDFRules' (pooled graph) when
+they are installed under ``tools/``. E4 applies to TSARM only: the static baselines
 produce no per-window confidence, so they cannot detect a transition.
 
 Usage::
@@ -150,7 +150,13 @@ def main() -> None:
     report = {"dataset": dataset.name, "triples": n_triples, "reference_rules": sorted(true_rules)}
 
     q = precision_recall_f1(tsarm_rules, true_rules)
-    report["E3_tsarm"] = vars(q)
+    # Strict scoring: only the planted rules count as true. Other mined rules
+    # (e.g. the converse Org => Class, which noise makes hold with conf < 1)
+    # count as false positives; they are listed so a reader can inspect them.
+    report["E3_tsarm"] = {
+        **vars(q),
+        "mined_rules": {k: v["lifecycle"] for k, v in sorted(tsarm_rules.items())},
+    }
     print(f"E3 TSARM : {q.n_mined} rules, P={q.precision:.3f} R={q.recall:.3f} F1={q.f1:.3f}")
     for k in sorted(true_rules):
         r = tsarm_rules.get(k)

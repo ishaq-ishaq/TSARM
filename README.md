@@ -89,32 +89,51 @@ they are reported as *skipped* rather than blocking the run. The harness reports
 support/confidence) and **temporal sensitivity** (persistence / drift, which the
 snapshot-based baselines cannot produce).
 
-#### RDFRules head-to-head
+#### Head-to-head with AMIE+ and RDFRules
 
-RDFRules (AMIE+) is fully wired via [`scripts/rdfrules_mine.py`](scripts/rdfrules_mine.py),
-which drives its batch mode and emits a `rules.csv` for the harness:
+Both baselines are wired in: AMIE 3.5.1 via [`scripts/amie_mine.py`](scripts/amie_mine.py)
+(`$AMIE_CMD`) and RDFRules 1.9.0 via [`scripts/rdfrules_mine.py`](scripts/rdfrules_mine.py)
+(`$RDFRULES_CMD`). Download commands and the exact environment are in
+[`docs/experiments.md`](docs/experiments.md) (E3–E5).
 
 ```bash
-# download + unpack an RDFRules release into $RDFRULES_HOME, then:
-export RDFRULES_HOME=/path/to/rdfrules-1.9.0
-export JAVA_HOME="/opt/homebrew/opt/openjdk@17"
-export RDFRULES_CMD='python3 scripts/rdfrules_mine.py --input {input} \
-  --output {output} --min-support {min_support} --min-confidence {min_confidence}'
-python3 scripts/run_benchmark.py --synthetic 2000
+caffeinate -i python3 scripts/run_benchmark.py --synthetic 20000 --repeats 3
+python3 scripts/evaluate_quality.py --entities 20000
 ```
 
-Result on a 16 k-triple synthetic dataset (RDFRules 1.9.0, Java 17):
+Runtime on synthetic data (Apple M5 Pro; one discarded warm-up round, then
+mean ± SD of 3 paired rounds; 1-hour wall-clock limit per system; AMIE 3.5.1
+and RDFRules 1.9.0 run on the pooled graph):
 
-| System | Runtime | #Rules | Mean conf | Temporal metrics |
-| --- | --- | --- | --- | --- |
-| **TSARM** | 57.9 s | 4 | 0.81 | ✅ persistence, drift |
-| **RDFRules** (AMIE+) | 82.3 s | 22 777 | 0.50 | ❌ snapshot-only |
+| Input triples | TSARM | AMIE+ | RDFRules |
+| --- | --- | --- | --- |
+| 16 k | 2.3 ± 0.3 s | **0.6 ± 0.1 s** | 3.7 ± 0.1 s |
+| 160 k | **3.1 ± 0.3 s** | 26.2 ± 0.9 s | 236.4 ± 8.9 s |
+| 1.6 M | **9.0 ± 0.4 s** | timeout (> 1 h) | timeout (> 1 h) |
 
-The two mine different rule *kinds* — AMIE+ exhaustively enumerates logical Horn
-rules (many, lower mean confidence), TSARM mines few focused transactional rules
-— so rule **counts** are not directly comparable, but **runtime** and **temporal
-capability** are: TSARM is faster here and is the only system producing temporal
-significance metrics.
+AMIE+ is fastest on the smallest input, where Spark's fixed start-up cost
+dominates TSARM's runtime. From 160 k triples on, TSARM is faster than both
+(paired t-test, p < 0.001 at 160 k; n = 3, so statistical power is low).
+At 1.6 M triples neither baseline finished within an hour.
+
+**Rule quality and temporal sensitivity** (E3/E4, 160 k triples,
+[`scripts/evaluate_quality.py`](scripts/evaluate_quality.py)), scored against
+the two rules the generator plants:
+
+| System | Rules mined | Comparable | Precision | Recall | Planted transient rule |
+| --- | --- | --- | --- | --- | --- |
+| **TSARM** | 4 | 4 | 0.50 | 1.00 | *decaying*: confidence 1.00 → 0.20, detected (TS = 1.0) |
+| AMIE+ | 40 | 40 | 0.05 | 1.00 | pooled confidence 1.0, no change visible |
+| RDFRules | 226 887 | 40 | 0.05 | 1.00 | pooled confidence 1.0, no change visible |
+
+All three systems find both planted rules. TSARM's two extra rules are their
+converses (Org ⇒ Class), which hold in the data but were not planted; scoring
+is strict, so they count as false positives. TSARM classifies both as
+*transient*, because their confidence stays below τ = 0.70 in every window. "Comparable" means a rule can be
+written as TSARM items (one variable, constant objects); the other RDFRules
+rules use variable chains and are not scored. The baselines mine the pooled
+graph, so they rate the planted transient rule as fully confident and cannot
+show that it collapsed.
 
 > **SANSA:** its ARM module (AmieSpark) exists only in the legacy SANSA v0.7.1
 > (Scala 2.11 / Spark 2.x) and was removed from current SANSA — incompatible

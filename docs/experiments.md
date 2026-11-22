@@ -81,6 +81,8 @@ python3 scripts/evaluate_quality.py --entities 20000        # synthetic, planted
   (`antecedent,consequent`, items separated by `;`) to
   `src.evaluation.quality.load_reference_rules`.
 - **Outputs:** `results/quality_<dataset>.json`.
+- **Status:** done on synthetic data (160k triples): TSARM P = 0.50, R = 1.00;
+  AMIE+ and RDFRules P = 0.05, R = 1.00 on their comparable rules (see README).
 
 ## E4: Temporal sensitivity
 
@@ -92,7 +94,8 @@ changes (`src.evaluation.quality.Event`).
 
 - **Detection rule:** confidence moves in the expected direction by more than
   ε = 0.05 between the windows bracketing the event date.
-- **Status:** machinery done; the Wikidata event list needs manual curation.
+- **Status:** synthetic TS = 1.0 (confidence 1.00 → 0.20 across the event).
+  The Wikidata event list still needs manual curation.
 
 ## E5: Baseline runtime comparison with statistics
 
@@ -110,6 +113,8 @@ caffeinate -i python3 scripts/run_benchmark.py --synthetic 200000 --repeats 3 --
   paired differences, then a paired t-test with Cohen's d or a Wilcoxon
   signed-rank test with rank-biserial r.
 - **Outputs:** `results/benchmark_synthetic[_n<N>]{,_runs,_stats}.csv`.
+- **Status:** done at all three sizes on the M5. At 1.6M triples both
+  baselines time out (> 1 h), so no `_stats.csv` is written (no paired data).
 
 ## Real-data runs (DBpedia)
 
