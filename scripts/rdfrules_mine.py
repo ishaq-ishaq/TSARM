@@ -26,6 +26,7 @@ import argparse
 import csv
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -169,6 +170,9 @@ def main():
         export_file = ws_dir / export_name
         if export_file.exists():
             rules = parse_rfrules_export(export_file)
+            # Keep the raw export for rule-level analysis (the harness only
+            # reads .csv/.tsv/.txt, so this file does not affect rule counts).
+            shutil.copy(export_file, out_dir / "rdfrules_export.json")
         if not rules and result_file.exists():
             try:
                 res = json.loads(result_file.read_text(encoding="utf-8"))
