@@ -119,11 +119,21 @@ caffeinate -i python3 scripts/run_benchmark.py --synthetic 200000 --repeats 3 --
 ## Real-data runs (DBpedia)
 
 ```bash
+bash scripts/download_dbpedia.sh          # annual releases 2016-10 ... 2022-12 + ontology
 python3 scripts/run_dbpedia.py            # 2 releases, 10.2M triples
-python3 scripts/run_dbpedia_temporal.py   # 3 releases, 2 windows, 15.4M triples
+python3 scripts/run_dbpedia_temporal.py   # 3 releases (2015-10, 2016-04, 2016-10), 2 windows
+python3 scripts/run_dbpedia_temporal.py --releases all --tag series                    # every release on disk
+python3 scripts/run_dbpedia_temporal.py --item-mode class --tag class_dbo_full         # class items + ontology
 ```
 
-The dumps go in `data/raw/` (download commands in the README).
+- **Download:** from the DBpedia Databus; when downloads.dbpedia.org is
+  unreachable the script falls back to Wayback Machine copies (available for
+  2016-10 to 2019-09 and the ontology). There is no 2017 release on the Databus.
+- **Class items:** the DBpedia ontology's own hierarchy (`--class-namespace`,
+  default the dbo namespace; mappings to schema.org/DOLCE are excluded), full
+  closure, mined with the length-bounded miner with ancestor pruning
+  (`src/mining/generalized.py`; FP-Growth cannot prune ancestor-redundant
+  itemsets).
 
 ## Wikidata (primary dataset)
 
@@ -159,6 +169,18 @@ python3 scripts/run_wikidata_temporal.py --snapshots 2022-01,2026-11 --width 1 -
   are not best-rank.
 - **Outputs:** `results/wikidata_temporal_rules_<tag>.{json,csv}` with
   parameters, statement counts, stage timings and the hardware fingerprint.
+- **Valid-time windows** (Equation 3.1 on real-world time) from one dump:
+  `--snapshots 2026-11 --valid-time 1975-01,2025-01,60,60 --unqualified drop`.
+
+Rehearsal before the real data (synthetic Wikidata-like series in the
+extractor's format, with planted reclassification events):
+
+```bash
+caffeinate -i python3 scripts/rehearse_wikidata.py --entities 200000,2000000 --depths 1,2,3,-1
+```
+
+Output: `results/wikidata_rehearsal.csv` (runtime, rules per lifecycle class
+and temporal sensitivity for each size and superclass depth).
 
 ## Fixed parameters
 

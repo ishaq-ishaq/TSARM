@@ -315,3 +315,38 @@ def test_wikidata_driver_end_to_end(tmp_path):
     assert not any("Q900" in a + c for a, c in rules)
     assert (("Q100",), ("Q200",)) not in rules  # taxonomic rule pruned
     assert report["params"]["windows"] == [["2017-01", "2018-01"], ["2018-01", "2019-01"]]
+
+
+def test_wikidata_driver_valid_time_windows(tmp_path):
+    # One dump. Q100 members hold Q300 from 2000 to 2009, and three quarters of them
+    # hold Q400 from 2010 on: over valid time, Q100 => Q300 decays and
+    # Q100 => Q400 emerges, although the dump is a single snapshot.
+    data = tmp_path / "wd"
+    data.mkdir()
+    ents = []
+    for i in range(20):
+        claims = [_statement("P31", "Q100"),
+                  _statement("P31", "Q300", qualifiers={"P580": _time("+2000-01-01T00:00:00Z"),
+                                                        "P582": _time("+2009-12-31T00:00:00Z")})]
+        if i < 15:
+            claims.append(_statement("P31", "Q400", qualifiers={"P580": _time("+2010-06-01T00:00:00Z")}))
+        ents.append({"type": "item", "id": f"Q{1000 + i}", "claims": {"P31": claims}})
+    _write_snapshot(data / "2026-11.tsv.gz", ents)
+    out = tmp_path / "results"
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "run_wikidata_temporal.py"),
+         "--data-dir", str(data), "--snapshots", "2026-11", "--valid-time", "2000-01,2015-01,60,60",
+         "--superclass-depth", "0", "--out", str(out), "--tag", "vt",
+         "--min-support", "0.1", "--min-confidence", "0.3", "--master", "local[2]"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    report = json.loads((out / "wikidata_temporal_rules_vt.json").read_text())
+    assert report["params"]["windows"] == [["2000-01-01", "2005-01-01"], ["2005-01-01", "2010-01-01"],
+                                           ["2010-01-01", "2015-01-01"]]
+    rules = {(r["antecedent"][0].rsplit("/", 1)[-1], r["consequent"][0].rsplit("/", 1)[-1]): r
+             for r in report["rules"]}
+    assert rules[("Q100", "Q300")]["confidence_series"] == pytest.approx([1.0, 1.0, 0.0])
+    assert rules[("Q100", "Q300")]["lifecycle"] == "decaying"
+    assert rules[("Q100", "Q400")]["confidence_series"] == pytest.approx([0.0, 0.0, 0.75])
+    assert rules[("Q100", "Q400")]["lifecycle"] == "emerging"
