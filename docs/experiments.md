@@ -81,9 +81,13 @@ python3 scripts/evaluate_quality.py --entities 20000        # synthetic, planted
   on the pooled graph. Baseline rules are compared only when expressible as
   TSARM items (single variable, constant objects); the rest are reported as
   not comparable.
-- **For Wikidata:** supply a hand-validated reference CSV
-  (`antecedent,consequent`, items separated by `;`) to
-  `src.evaluation.quality.load_reference_rules`.
+- **For Wikidata and DBpedia** (no ground truth): build the reference set by
+  pooled, blind, two-annotator judgement with `scripts/annotation_kit.py`
+  (`sheet`, then `score`). The procedure is in `docs/annotation_guidelines.md`.
+  The kit reports Cohen's kappa, per-system precision with Wilson 95 % CIs and
+  relative recall, and writes a reference CSV (`antecedent,consequent`) that
+  `src.evaluation.quality.load_reference_rules` reads. A pilot sheet with the
+  111 DBpedia class-item rules is in `results/annotation/`.
 - **Outputs:** `results/quality_<dataset>.json`.
 - **Status:** done on synthetic data (160k triples): TSARM P = 0.50, R = 1.00;
   AMIE+ and RDFRules P = 0.05, R = 1.00 on their comparable rules (see README).
@@ -93,13 +97,36 @@ python3 scripts/evaluate_quality.py --entities 20000        # synthetic, planted
 *Proposal §3.7.3 iii: TS = |E_correct| / |E|.*
 
 Same script as E3. On synthetic data the reference event is the planted
-transient rule's collapse. For Wikidata, build a list of dated structural
-changes (`src.evaluation.quality.Event`).
+transient rule's collapse. For Wikidata, the event list is proposed from the
+data and then confirmed by hand:
+
+```bash
+# 1. candidates: mass retyping of the *same* entities between snapshots
+python3 scripts/propose_events.py propose --data-dir data/processed/wikidata \
+    --min-entities 1000 --min-share 0.2 --out results/events/wikidata_candidates.csv
+# 2. review: confirm each row in Wikidata (class history, bot-request archive);
+#    write 1 in `confirmed` and the evidence in `source`; add hand-found events as rows
+# 3. score a TSARM run
+python3 scripts/propose_events.py score --events results/events/wikidata_candidates.csv \
+    --report results/wikidata_temporal_rules_h1.json --out results/events/wikidata_ts.json
+```
+
+The candidates come from entity-level edits (`src/evaluation/events.py`): an
+entity typed `X` in both snapshots that gains (or loses) `Y` is evidence for
+`{X} => {Y}` emerging (or decaying). New entities are ignored. The signal is
+therefore independent of TSARM's window-level confidence, and the evaluation
+is not circular.
+
+On the rehearsal series (100k entities), the proposer returns exactly the two
+planted events (decay share 0.85, emergence share 0.81) and nothing else, and
+the driver run on the same data gives TS = 1.0 (confidence 1.00 → 0.27 and
+0.18 → 0.99).
 
 - **Detection rule:** confidence moves in the expected direction by more than
   ε = 0.05 between the windows bracketing the event date.
 - **Status:** synthetic TS = 1.0 (confidence 1.00 → 0.20 across the event).
-  The Wikidata event list still needs manual curation.
+  The Wikidata pipeline (propose, confirm, score) is tested on the rehearsal
+  series; the real list awaits the downloads and manual confirmation.
 
 ## E5: Baseline runtime comparison with statistics
 
