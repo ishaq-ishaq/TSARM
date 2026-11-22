@@ -1,0 +1,29 @@
+{
+  "title": "TSARM: Scalable Temporal Semantic Association Rule Mining in Evolving Knowledge Graphs",
+  "upload_type": "software",
+  "version": "0.9.0",
+  "description": "<p>TSARM is an open-source Apache Spark (PySpark) framework for mining association rules from time-partitioned RDF knowledge graphs and scoring them with temporal significance metrics: temporal support, temporal confidence drift and the rule persistence score, over sliding windows of snapshots. It generates semantic items (facts, or classes with their superclass closure), mines each window with FP-Growth or a length-bounded generalized miner with ancestor pruning, tracks every candidate rule across all windows, assigns lifecycle classes (stable, emerging, decaying, transient, intermittent) and exports the results as JSON and CSV. The release includes Wikidata and DBpedia loaders, the evaluation harness (scalability, rule quality, temporal sensitivity, baseline comparison with AMIE+ and RDFRules) and scripts for single-machine and cluster runs.</p>",
+  "creators": [
+    {
+      "name": "Isyaku, Isya",
+      "affiliation": "University of Abuja, Department of Computer Science"
+    }
+  ],
+  "license": "MIT",
+  "keywords": [
+    "association rule mining",
+    "knowledge graphs",
+    "RDF",
+    "temporal data mining",
+    "Apache Spark",
+    "Wikidata",
+    "DBpedia"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/ishaq-ishaq/TSARM",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}
