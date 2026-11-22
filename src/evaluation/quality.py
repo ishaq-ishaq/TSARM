@@ -76,6 +76,42 @@ def amie_rule_key(rule: str) -> Optional[str]:
     return rule_key(sides[0], sides[1])
 
 
+def _rdfrules_iri(node) -> Optional[str]:
+    """IRI string of an RDFRules export node value, or None if not an IRI."""
+    if isinstance(node, dict) and "nameSpace" in node and "localName" in node:
+        return f"{node['nameSpace']}{node['localName']}"
+    return None
+
+
+def rdfrules_rule_key(rule: dict) -> Optional[str]:
+    """TSARM-style key for one rule from an RDFRules JSON export, or ``None``.
+
+    Comparable only when every atom has the same variable subject and a
+    constant IRI object (literal objects are excluded, as in TSARM's items).
+    """
+    body = rule.get("body") or []
+    head = rule.get("head")
+    if not body or not isinstance(head, dict):
+        return None
+    sides: List[List[str]] = []
+    subjects: Set[str] = set()
+    for atoms in (body, [head]):
+        items = []
+        for atom in atoms:
+            subj, obj, pred = atom.get("subject", {}), atom.get("object", {}), atom.get("predicate")
+            if subj.get("type") != "variable" or obj.get("type") != "constant":
+                return None
+            p_iri, o_iri = _rdfrules_iri(pred), _rdfrules_iri(obj.get("value"))
+            if not p_iri or not o_iri:
+                return None
+            subjects.add(subj.get("value"))
+            items.append(f"{p_iri}{ITEM_SEP}{o_iri}")
+        sides.append(items)
+    if len(subjects) != 1:
+        return None
+    return rule_key(sides[0], sides[1])
+
+
 # ---------------------------------------------------------------------------
 # E3: precision / recall / F1
 # ---------------------------------------------------------------------------

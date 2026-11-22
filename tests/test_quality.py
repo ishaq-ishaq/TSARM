@@ -7,6 +7,7 @@ import pytest
 from src.evaluation.quality import (
     Event,
     amie_rule_key,
+    rdfrules_rule_key,
     bracketing_windows,
     evaluate_events,
     load_reference_rules,
@@ -41,6 +42,31 @@ def test_amie_rule_key_matches_tsarm_key():
 )
 def test_amie_rules_not_comparable(rule):
     assert amie_rule_key(rule) is None
+
+
+def _node(ns, local):
+    return {"localName": local, "nameSpace": ns, "prefix": ""}
+
+
+def _atom(subj, pred, obj):
+    return {"subject": subj, "predicate": pred, "object": obj}
+
+
+def test_rdfrules_rule_key_matches_tsarm_key():
+    var = {"type": "variable", "value": "?a"}
+    rule = {
+        "body": [_atom(var, _node("http://ex.org/", "worksAt"), {"type": "constant", "value": _node("http://ex.org/", "Org0")})],
+        "head": _atom(var, _node("http://www.w3.org/1999/02/22-rdf-syntax-ns#", "type"),
+                      {"type": "constant", "value": _node("http://ex.org/", "Class0")}),
+    }
+    assert rdfrules_rule_key(rule) == rule_key([f"{W}={O0}"], [f"{T}={C0}"])
+    # variable object -> not comparable
+    rule["head"]["object"] = {"type": "variable", "value": "?b"}
+    assert rdfrules_rule_key(rule) is None
+    # literal constant -> not comparable
+    rule["head"]["object"] = {"type": "constant", "value": "42"}
+    assert rdfrules_rule_key(rule) is None
+    assert rdfrules_rule_key({"body": [], "head": None}) is None
 
 
 def test_precision_recall_f1():
