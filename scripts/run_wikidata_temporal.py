@@ -25,6 +25,13 @@ Start with a small sample to check memory and runtime, then scale up::
 
 Any subset of at least ``--width`` snapshots works, e.g. two downloaded
 snapshots: ``--snapshots 2022-01,2026-11 --width 1``.
+
+**Valid-time windows** (proposal Equation 3.1 on real-world time): mine one
+dump over calendar windows built from the P580/P582/P585 qualifiers, e.g. ten
+windows of 5 years every 5 years from 1975::
+
+    python3 scripts/run_wikidata_temporal.py --snapshots 2026-11 \
+        --valid-time 1975-01,2025-01,60,60 --unqualified drop
 """
 
 from __future__ import annotations
@@ -82,6 +89,10 @@ def main() -> None:
     ap.add_argument("--valid-at-snapshot", action="store_true",
                     help="drop statements whose P580/P582 dates exclude the snapshot date")
     ap.add_argument("--sample", type=float, help="fraction of entities to keep, e.g. 0.01")
+    ap.add_argument("--valid-time", metavar="START,END,WIDTH,STEP",
+                    help="valid-time windows instead of snapshot windows: YYYY-MM,YYYY-MM,months,months")
+    ap.add_argument("--unqualified", choices=["keep", "drop"], default="keep",
+                    help="with --valid-time: keep statements without dates in every window, or drop them")
     ap.add_argument("--master", default="local[*]")
     ap.add_argument("--out", type=Path, default=ROOT / "results")
     ap.add_argument("--tag", default="", help="suffix for the output file names")
@@ -90,7 +101,10 @@ def main() -> None:
 
     wanted = [s.strip() for s in args.snapshots.split(",")] if args.snapshots else None
     snapshots = find_snapshots(args.data_dir.resolve(), wanted)
-    if len(snapshots) < max(args.width, 1) or (args.width == 1 and len(snapshots) < 2):
+    if args.valid_time:
+        if len(snapshots) != 1:
+            sys.exit("--valid-time uses one snapshot (normally the latest): pass --snapshots YYYY-MM.")
+    elif len(snapshots) < max(args.width, 1) or (args.width == 1 and len(snapshots) < 2):
         sys.exit(f"Need at least {max(args.width, 2)} snapshots; found {list(snapshots)} in {args.data_dir}")
 
     depth = None if args.superclass_depth < 0 else args.superclass_depth
@@ -112,11 +126,25 @@ def main() -> None:
             print(f"  {snap}: {per_snap.get(snap, 0):,}")
 
         t1 = time.perf_counter()
-        windows = build_windows(ordered_snapshots(triples), width=args.width, step=args.step)
-        windowed = assign_windows(spark, triples, width=args.width, step=args.step)
-        print(f"Windows (width={args.width}, step={args.step}):")
-        for w in windows:
-            print(f"  w{w.window_id} = {list(w.snapshots)}")
+        if args.valid_time:
+            from datetime import datetime as _dt
+
+            from src.windowing.valid_time import assign_valid_time_windows, build_time_windows
+
+            vs, ve, vw, vstep = args.valid_time.split(",")
+            tw = build_time_windows(_dt.strptime(vs, "%Y-%m").date(), _dt.strptime(ve, "%Y-%m").date(),
+                                    int(vw), int(vstep))
+            windowed = assign_valid_time_windows(spark, triples, tw, unqualified=args.unqualified)
+            window_labels = [[str(w.start), str(w.end)] for w in tw]
+            print(f"Valid-time windows ({vw} months every {vstep}; unqualified statements: {args.unqualified}):")
+        else:
+            windows = build_windows(ordered_snapshots(triples), width=args.width, step=args.step)
+            windowed = assign_windows(spark, triples, width=args.width, step=args.step)
+            window_labels = [list(w.snapshots) for w in windows]
+            print(f"Windows (width={args.width}, step={args.step}):")
+        for i, label in enumerate(window_labels):
+            print(f"  w{i} = {label}")
+        windows = window_labels
         _, rules, candidates = mine_temporal(
             windowed, range(len(windows)),
             min_support=args.min_support, min_confidence=args.min_confidence,
@@ -149,7 +177,9 @@ def main() -> None:
                 "dataset": "wikidata P31/P279",
                 "snapshots": list(snapshots),
                 "statements_per_snapshot": per_snap,
-                "windows": [list(w.snapshots) for w in windows],
+                "windows": windows,
+                "window_time": "valid" if args.valid_time else "transaction",
+                "valid_time": args.valid_time, "unqualified": args.unqualified if args.valid_time else None,
                 "width": args.width, "step": args.step,
                 "min_support": args.min_support, "min_confidence": args.min_confidence,
                 "tau": args.tau, "superclass_depth": args.superclass_depth,

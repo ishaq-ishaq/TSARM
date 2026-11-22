@@ -355,6 +355,8 @@ def mine_temporal(
     item_mode: str = "fact",
     include_superclasses: bool = True,
     superclass_depth: Optional[int] = None,
+    miner: str = "auto",
+    max_len: int = 3,
 ) -> Tuple[DataFrame, DataFrame, DataFrame]:
     """Per-window mining plus the candidate recount the temporal metrics need.
 
@@ -369,6 +371,10 @@ def mine_temporal(
             closure. A large, deep hierarchy such as Wikidata's needs a limit:
             ancestors always co-occur with their subclass, so every subset of a
             long ancestor chain is a frequent itemset for FP-Growth.
+        miner: ``"fpgrowth"`` (Spark MLlib), ``"bounded"`` (level-wise,
+            itemsets of at most ``max_len`` items, ancestor-redundant itemsets
+            pruned; :mod:`src.mining.generalized`), or ``"auto"``: bounded for
+            class items with superclasses, FP-Growth otherwise.
 
     Returns:
         ``(itemsets, rules, candidates)``. ``itemsets`` and ``rules`` are as
@@ -391,17 +397,28 @@ def mine_temporal(
             if superclass_depth is not None and superclass_depth < 1:
                 raise ValueError("superclass_depth must be >= 1 (or None for the full closure)")
             rounds = 64 if superclass_depth is None else superclass_depth - 1
-            closure = subclass_closure_spark(subclass_edges(windowed_df), max_depth=rounds).cache()
+            closure = subclass_closure_spark(subclass_edges(windowed_df), max_depth=rounds)
         transactions = build_class_transactions(
             windowed_df, include_superclasses=include_superclasses, closure=closure
-        ).cache()
+        ).localCheckpoint()
     else:
         transactions = build_transactions(
             windowed_df, include_literals=include_literals
         ).cache()
-    itemsets, rules = mine_rules(
-        transactions, min_support=min_support, min_confidence=min_confidence
-    )
+    if miner == "auto":
+        miner = "bounded" if closure is not None else "fpgrowth"
+    if miner == "bounded":
+        from src.mining.generalized import mine_generalized
+
+        itemsets, rules = mine_generalized(
+            transactions, min_support, min_confidence, max_len=max_len, closure=closure
+        )
+    elif miner == "fpgrowth":
+        itemsets, rules = mine_rules(
+            transactions, min_support=min_support, min_confidence=min_confidence
+        )
+    else:
+        raise ValueError(f"miner must be 'auto', 'fpgrowth' or 'bounded', got {miner!r}")
     if closure is not None:
         from src.mining.semantic_items import drop_taxonomic_rules
 

@@ -69,26 +69,25 @@ def subclass_closure_spark(edges: DataFrame, max_depth: int = 64) -> DataFrame:
     or after ``max_depth`` rounds. Cycles in the hierarchy are harmless: pairs
     are de-duplicated against everything found so far.
     """
-    e = edges.select("window_id", "cls", F.col("parent").alias("ancestor")).distinct()
-    closure = e.cache()
+    # Each round's result is materialised with localCheckpoint(): without it the
+    # query plan of round k contains round k-1's plan twice, so the plan grows
+    # exponentially with the depth of the hierarchy (on the DBpedia ontology,
+    # rendering the plan alone exhausted a 12 GB heap).
+    e = edges.select("window_id", "cls", F.col("parent").alias("ancestor")).distinct().localCheckpoint()
+    closure = e
     delta = e
     for _ in range(max_depth):
         step = (
-            delta.alias("d")
-            .join(
-                e.alias("e"),
-                (F.col("d.window_id") == F.col("e.window_id"))
-                & (F.col("d.ancestor") == F.col("e.cls")),
-            )
-            .select(F.col("d.window_id"), F.col("d.cls"), F.col("e.ancestor"))
+            delta.select("window_id", "cls", F.col("ancestor").alias("_mid"))
+            .join(e.select("window_id", F.col("cls").alias("_mid"), "ancestor"), ["window_id", "_mid"])
+            .select("window_id", "cls", "ancestor")
             .where(F.col("cls") != F.col("ancestor"))
             .distinct()
         )
-        new = step.join(closure, ["window_id", "cls", "ancestor"], "left_anti").cache()
+        new = step.join(closure, ["window_id", "cls", "ancestor"], "left_anti").localCheckpoint()
         if new.limit(1).count() == 0:
-            new.unpersist()
             break
-        closure = closure.unionByName(new).cache()
+        closure = closure.unionByName(new).localCheckpoint()
         delta = new
     return closure
 
