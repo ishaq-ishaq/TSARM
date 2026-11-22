@@ -44,8 +44,7 @@ Notes:
 - Six near-annual snapshots plus the current dump. The gap from 2022 to 2026
   has to be stated as a limitation; the alternative is dropping to six
   snapshots (2017–2022).
-- This replaces "annual 2017–2023". **It is a change to §1.6/§3.7.1, so the
-  supervisor should agree to it.**
+- This replaces "annual 2017–2023" in §1.6/§3.7.1 of the research proposal.
 
 ## Processing approach (no need to store the raw dumps)
 
@@ -77,9 +76,47 @@ Only the filtered output is written to disk.
 The extractor keeps both, so TSARM can window by either. This also covers the
 §1.7 limitation on temporal-annotation coverage.
 
-## Decisions needed
+## Decision (2026-11-22)
 
-1. Approve the 7-snapshot series above, or the 6-snapshot 2017–2022
-   alternative (supervisor sign-off, as it changes §1.6/§3.7.1).
-2. Approve downloading about 610 GB, preferably on the Oracle Always Free VM
-   once the account exists.
+The 7-snapshot series was adopted, and the research proposal was updated
+accordingly (§1.6, §1.7, §3.7.1, Table 3.3 and §3.7.4).
+
+## Download links
+
+| Snapshot | File | Size |
+|---|---|---|
+| 2017-01 | <https://archive.org/download/wikidatawiki-20170101/wikidatawiki-20170101-pages-articles.xml.bz2> | 11.7 GB |
+| 2018-01 | <https://archive.org/download/wikidatawiki-20180101/wikidatawiki-20180101-pages-articles.xml.bz2> | 34.9 GB |
+| 2019-01 | <https://archive.org/download/wikidatawiki-20190101/wikidatawiki-20190101-pages-articles.xml.bz2> | 61.6 GB |
+| 2020-09 | <https://archive.org/download/wikidatawiki-20200920/wikidatawiki-20200920-pages-articles.xml.bz2> | 106.2 GB |
+| 2021-01 | <https://archive.org/download/wikidatawiki-20210120/wikidatawiki-20210120-pages-articles.xml.bz2> | 109.8 GB |
+| 2022-01 | <https://archive.org/download/wikidatawiki-20220120/wikidatawiki-20220120-pages-articles.xml.bz2> | 128.9 GB |
+| 2026-11 | <https://dumps.wikimedia.org/wikidatawiki/entities/20261116/wikidata-20261116-all.json.gz> | 157.2 GB |
+
+> **Download the 2026-11 dump first.** Wikimedia keeps only the last few weeks
+> of dumps, so this file will disappear. The Internet Archive files are
+> permanent.
+
+Every Internet Archive item also offers a torrent, which is often faster and
+resumes automatically:
+`https://archive.org/download/<item>/<item>_archive.torrent`, for example
+`https://archive.org/download/wikidatawiki-20170101/wikidatawiki-20170101_archive.torrent`. The torrent covers
+*every* file in the item, so in the torrent client select **only** the
+`...-pages-articles.xml.bz2` file.
+
+## How to run
+
+`scripts/download_wikidata.sh` does everything for each snapshot. It
+downloads with resume (re-run it after a dropped connection), verifies the size,
+extracts the class statements into `data/processed/wikidata/<snapshot>.tsv.gz`,
+and deletes the raw dump (set `KEEP_RAW=1` to keep it).
+
+```bash
+cd ~/TSARM                                    # or the project folder on the Mac
+bash scripts/download_wikidata.sh 2026-11     # the expiring one first
+bash scripts/download_wikidata.sh             # then all the rest
+```
+
+Raw dumps go to `~/wikidata-raw` (`RAW_DIR=...` to change). Only one raw dump
+is on disk at a time, so the peak disk use is about 160 GB. On the Oracle VM,
+first install the multi-core decompressors: `sudo apt install lbzip2 pigz`.
