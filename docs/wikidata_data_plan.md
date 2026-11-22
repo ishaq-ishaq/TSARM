@@ -111,6 +111,9 @@ downloads with resume (re-run it after a dropped connection), verifies the size,
 extracts the class statements into `data/processed/wikidata/<snapshot>.tsv.gz`,
 and deletes the raw dump (set `KEEP_RAW=1` to keep it).
 
+**Faster option:** download on a Google Cloud VM instead of the Mac, at
+data-centre speed, and mine Wikidata there; see `docs/gcp.md` Phase A.
+
 On the Mac, install the parallel decompressors first. Without `lbzip2`
 the `.xml.bz2` snapshots are decompressed on a single core, which is many
 times slower:

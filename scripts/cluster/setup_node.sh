@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# One-time setup of a TSARM Spark node on an Oracle Cloud Always Free
-# Ampere A1 VM (Ubuntu 22.04/24.04, aarch64). Run on EVERY node:
+# One-time setup of a TSARM Spark node: an Oracle Cloud Always Free Ampere A1
+# VM or a Google Cloud VM (Ubuntu 22.04/24.04, arm64 or amd64). Run on EVERY node:
 #     bash setup_node.sh
 # Idempotent: safe to re-run.
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive   # no prompts (e.g. iptables-persistent) when run over ssh
 
 REPO_URL="${REPO_URL:-https://github.com/ishaq-ishaq/TSARM.git}"
 TSARM_DIR="${TSARM_DIR:-$HOME/TSARM}"
