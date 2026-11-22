@@ -251,6 +251,48 @@ class TSARMBaseline(Baseline):
         )
 
 
+def _run_with_wall_timeout(command: str, timeout_sec: float):
+    """Run a shell command; kill its whole process group after ``timeout_sec``.
+
+    Two problems with ``subprocess.run(timeout=...)`` for long JVM baselines:
+
+    * on timeout it kills only the shell, so the tool's JVM keeps running as
+      an orphan;
+    * its deadline uses a monotonic clock that stops while the machine sleeps,
+      so an overnight run on a laptop can exceed its limit by hours.
+
+    Here the command runs in its own session (process group), the deadline is
+    measured on the wall clock, and output goes to temporary files so a chatty
+    tool cannot block on a full pipe.
+
+    Returns a ``CompletedProcess``, or ``None`` if the command was killed.
+    """
+    import signal
+
+    with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
+        proc = subprocess.Popen(
+            command, shell=True, stdout=out, stderr=err, text=True, start_new_session=True
+        )
+        deadline = time.time() + timeout_sec
+        while proc.poll() is None:
+            if time.time() > deadline:
+                for sig in (signal.SIGTERM, signal.SIGKILL):
+                    try:
+                        os.killpg(proc.pid, sig)
+                    except ProcessLookupError:
+                        break
+                    try:
+                        proc.wait(timeout=10)
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+                return None
+            time.sleep(0.2)
+        out.seek(0)
+        err.seek(0)
+        return subprocess.CompletedProcess(command, proc.returncode, out.read(), err.read())
+
+
 class ExternalCommandBaseline(Baseline):
     """Wraps an external miner invoked as a shell command writing a rules file.
 
@@ -299,23 +341,17 @@ class ExternalCommandBaseline(Baseline):
                 min_confidence=self.min_confidence,
             )
             start = time.perf_counter()
-            try:
-                proc = subprocess.run(
-                    command,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout_sec,
-                )
-            except subprocess.TimeoutExpired:
+            proc = _run_with_wall_timeout(command, self.timeout_sec)
+            runtime = time.perf_counter() - start
+            if proc is None:
                 return BenchmarkResult(
                     system=self.name,
                     dataset=dataset.name,
-                    status="error",
+                    status="timeout",
                     supports_temporal=self.supports_temporal,
-                    note=f"Timed out after {self.timeout_sec}s.",
+                    runtime_sec=float(self.timeout_sec),
+                    note=f"Did not finish within {self.timeout_sec}s (killed).",
                 )
-            runtime = time.perf_counter() - start
 
             if proc.returncode != 0:
                 return BenchmarkResult(

@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.evaluation.adapters import (  # noqa: E402
+    BenchmarkResult,
     Dataset,
     Snapshot,
     TSARMBaseline,
@@ -70,6 +71,12 @@ def main() -> None:
         "warm-up round is discarded and TSARM is compared with each baseline "
         "using the Table 3.4 tests",
     )
+    ap.add_argument(
+        "--timeout",
+        type=int,
+        default=3600,
+        help="wall-clock limit per external-baseline run, in seconds (default 3600)",
+    )
     args = ap.parse_args()
 
     mode = "synthetic" if args.synthetic else "sample"
@@ -93,14 +100,15 @@ def main() -> None:
 
         baselines = [
             TSARMBaseline(spark, min_support=min_support, min_confidence=min_confidence),
-            sansa_baseline(min_support=min_support, min_confidence=min_confidence),
-            rdfrules_baseline(min_support=min_support, min_confidence=min_confidence),
-            amie_baseline(min_support=min_support, min_confidence=min_confidence),
+            sansa_baseline(min_support=min_support, min_confidence=min_confidence, timeout_sec=args.timeout),
+            rdfrules_baseline(min_support=min_support, min_confidence=min_confidence, timeout_sec=args.timeout),
+            amie_baseline(min_support=min_support, min_confidence=min_confidence, timeout_sec=args.timeout),
         ]
+        timed_out = set()
         if args.repeats > 1:
             print("Warm-up round (discarded) ...", flush=True)
-            run_benchmark(baselines, [dataset])
-        rounds = [run_benchmark(baselines, [dataset]) for _ in range(max(1, args.repeats))]
+            _round(baselines, dataset, timed_out)
+        rounds = [_round(baselines, dataset, timed_out) for _ in range(max(1, args.repeats))]
         results = rounds[-1]
 
         print("\n## Benchmark comparison\n")
@@ -121,6 +129,25 @@ def main() -> None:
         spark.stop()
         if tmp_ctx is not None:
             tmp_ctx.cleanup()
+
+
+def _round(baselines, dataset, timed_out: set):
+    """One benchmark round. A system that has timed out once is not re-run:
+    it is reported as ``timeout`` again, which saves hours on large inputs."""
+    active = [b for b in baselines if b.name not in timed_out]
+    results = run_benchmark(active, [dataset])
+    for name in sorted(timed_out):
+        results.append(
+            BenchmarkResult(
+                system=name,
+                dataset=dataset.name,
+                status="timeout",
+                supports_temporal=False,
+                note="not re-run: timed out in an earlier round",
+            )
+        )
+    timed_out.update(r.system for r in results if r.status == "timeout")
+    return results
 
 
 def _write_repeats(rounds, mode: str) -> None:

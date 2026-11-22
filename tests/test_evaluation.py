@@ -106,6 +106,31 @@ def test_external_baseline_reports_command_failure(monkeypatch):
     assert result.status == "error"
 
 
+def test_external_baseline_timeout_kills_whole_process_group(monkeypatch, tmp_path):
+    """A timed-out baseline must not leave its child process (e.g. a JVM) running."""
+    import os
+    import time
+
+    pidfile = tmp_path / "child.pid"
+    # The shell starts a long-lived child, records its pid, and waits for it,
+    # just like a wrapper script launching a Java miner.
+    monkeypatch.setenv("SANSA_CMD", f"sleep 60 & echo $! > {pidfile}; wait")
+    baseline = sansa_baseline(timeout_sec=1)
+    start = time.time()
+    result = baseline.run(_sample_dataset())
+    assert time.time() - start < 20
+    assert result.status == "timeout"
+    assert result.runtime_sec == 1.0
+    child = int(pidfile.read_text().strip())
+    time.sleep(0.5)
+    try:
+        os.kill(child, 0)  # signal 0: only checks existence
+        alive = True
+    except ProcessLookupError:
+        alive = False
+    assert not alive, "child process survived the timeout"
+
+
 def test_external_baseline_placeholders(monkeypatch):
     # Echo the formatted command into a file to assert placeholders resolve.
     out_marker = "import sys,os;open(os.path.join(sys.argv[1],'rules.csv'),'w').write('x,y\\n1,2\\n')"
