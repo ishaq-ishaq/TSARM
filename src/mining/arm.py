@@ -44,7 +44,7 @@ defined over the full window set, so this dense table is what
 
 from __future__ import annotations
 
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from pyspark.ml.fpm import FPGrowth
 from pyspark.sql import Column, DataFrame
@@ -343,27 +343,85 @@ def recount_candidates(
     )
 
 
+ITEM_MODES = ("fact", "class")
+
+
 def mine_temporal(
     windowed_df: DataFrame,
     window_ids: Sequence[int],
     min_support: float = 0.3,
     min_confidence: float = 0.6,
     include_literals: bool = False,
+    item_mode: str = "fact",
+    include_superclasses: bool = True,
+    superclass_depth: Optional[int] = None,
+    miner: str = "auto",
+    max_len: int = 3,
 ) -> Tuple[DataFrame, DataFrame, DataFrame]:
     """Per-window mining plus the candidate recount the temporal metrics need.
 
+    Args:
+        item_mode: ``"fact"``: items are ``predicate=object`` facts
+            (:func:`build_transactions`). ``"class"``: items are the entity's
+            ontological classes plus, with ``include_superclasses``, all their
+            ancestors (Algorithm 3.1; :mod:`src.mining.semantic_items`).
+            Taxonomic rules implied by the hierarchy are then removed.
+        superclass_depth: In class mode, how many ``subClassOf`` hops of
+            ancestors to add (``1`` = direct parents only); ``None`` = the full
+            closure. A large, deep hierarchy such as Wikidata's needs a limit:
+            ancestors always co-occur with their subclass, so every subset of a
+            long ancestor chain is a frequent itemset for FP-Growth.
+        miner: ``"fpgrowth"`` (Spark MLlib), ``"bounded"`` (level-wise,
+            itemsets of at most ``max_len`` items, ancestor-redundant itemsets
+            pruned; :mod:`src.mining.generalized`), or ``"auto"``: bounded for
+            class items with superclasses, FP-Growth otherwise.
+
     Returns:
-        ``(itemsets, rules, candidates)`` -- ``itemsets``/``rules`` as from
-        :func:`mine_rules` (only windows where each rule was frequent), and
-        ``candidates`` the dense per-window table from
-        :func:`recount_candidates`, which is the input
+        ``(itemsets, rules, candidates)``. ``itemsets`` and ``rules`` are as
+        from :func:`mine_rules` (only windows where each rule was frequent);
+        ``candidates`` is the dense per-window table from
+        :func:`recount_candidates`, the input that
         :func:`src.metrics.temporal.compute_metrics` expects.
     """
-    transactions = build_transactions(
-        windowed_df, include_literals=include_literals
-    ).cache()
-    itemsets, rules = mine_rules(
-        transactions, min_support=min_support, min_confidence=min_confidence
-    )
+    if item_mode not in ITEM_MODES:
+        raise ValueError(f"item_mode must be one of {ITEM_MODES}, got {item_mode!r}")
+    closure = None
+    if item_mode == "class":
+        from src.mining.semantic_items import (
+            build_class_transactions,
+            subclass_closure_spark,
+            subclass_edges,
+        )
+
+        if include_superclasses:
+            if superclass_depth is not None and superclass_depth < 1:
+                raise ValueError("superclass_depth must be >= 1 (or None for the full closure)")
+            rounds = 64 if superclass_depth is None else superclass_depth - 1
+            closure = subclass_closure_spark(subclass_edges(windowed_df), max_depth=rounds)
+        transactions = build_class_transactions(
+            windowed_df, include_superclasses=include_superclasses, closure=closure
+        ).localCheckpoint()
+    else:
+        transactions = build_transactions(
+            windowed_df, include_literals=include_literals
+        ).cache()
+    if miner == "auto":
+        miner = "bounded" if closure is not None else "fpgrowth"
+    if miner == "bounded":
+        from src.mining.generalized import mine_generalized
+
+        itemsets, rules = mine_generalized(
+            transactions, min_support, min_confidence, max_len=max_len, closure=closure
+        )
+    elif miner == "fpgrowth":
+        itemsets, rules = mine_rules(
+            transactions, min_support=min_support, min_confidence=min_confidence
+        )
+    else:
+        raise ValueError(f"miner must be 'auto', 'fpgrowth' or 'bounded', got {miner!r}")
+    if closure is not None:
+        from src.mining.semantic_items import drop_taxonomic_rules
+
+        rules = drop_taxonomic_rules(rules, closure)
     candidates = recount_candidates(transactions, rules, window_ids)
     return itemsets, rules, candidates

@@ -89,32 +89,51 @@ they are reported as *skipped* rather than blocking the run. The harness reports
 support/confidence) and **temporal sensitivity** (persistence / drift, which the
 snapshot-based baselines cannot produce).
 
-#### RDFRules head-to-head
+#### Head-to-head with AMIE+ and RDFRules
 
-RDFRules (AMIE+) is fully wired via [`scripts/rdfrules_mine.py`](scripts/rdfrules_mine.py),
-which drives its batch mode and emits a `rules.csv` for the harness:
+Both baselines are wired in: AMIE 3.5.1 via [`scripts/amie_mine.py`](scripts/amie_mine.py)
+(`$AMIE_CMD`) and RDFRules 1.9.0 via [`scripts/rdfrules_mine.py`](scripts/rdfrules_mine.py)
+(`$RDFRULES_CMD`). Download commands and the exact environment are in
+[`docs/experiments.md`](docs/experiments.md) (E3–E5).
 
 ```bash
-# download + unpack an RDFRules release into $RDFRULES_HOME, then:
-export RDFRULES_HOME=/path/to/rdfrules-1.9.0
-export JAVA_HOME="/opt/homebrew/opt/openjdk@17"
-export RDFRULES_CMD='python3 scripts/rdfrules_mine.py --input {input} \
-  --output {output} --min-support {min_support} --min-confidence {min_confidence}'
-python3 scripts/run_benchmark.py --synthetic 2000
+caffeinate -i python3 scripts/run_benchmark.py --synthetic 20000 --repeats 3
+python3 scripts/evaluate_quality.py --entities 20000
 ```
 
-Result on a 16 k-triple synthetic dataset (RDFRules 1.9.0, Java 17):
+Runtime on synthetic data (Apple M5 Pro; one discarded warm-up round, then
+mean ± SD of 3 paired rounds; 1-hour wall-clock limit per system; AMIE 3.5.1
+and RDFRules 1.9.0 run on the pooled graph):
 
-| System | Runtime | #Rules | Mean conf | Temporal metrics |
-| --- | --- | --- | --- | --- |
-| **TSARM** | 57.9 s | 4 | 0.81 | ✅ persistence, drift |
-| **RDFRules** (AMIE+) | 82.3 s | 22 777 | 0.50 | ❌ snapshot-only |
+| Input triples | TSARM | AMIE+ | RDFRules |
+| --- | --- | --- | --- |
+| 16 k | 2.3 ± 0.3 s | **0.6 ± 0.1 s** | 3.7 ± 0.1 s |
+| 160 k | **3.1 ± 0.3 s** | 26.2 ± 0.9 s | 236.4 ± 8.9 s |
+| 1.6 M | **9.0 ± 0.4 s** | timeout (> 1 h) | timeout (> 1 h) |
 
-The two mine different rule *kinds* — AMIE+ exhaustively enumerates logical Horn
-rules (many, lower mean confidence), TSARM mines few focused transactional rules
-— so rule **counts** are not directly comparable, but **runtime** and **temporal
-capability** are: TSARM is faster here and is the only system producing temporal
-significance metrics.
+AMIE+ is fastest on the smallest input, where Spark's fixed start-up cost
+dominates TSARM's runtime. From 160 k triples on, TSARM is faster than both
+(paired t-test, p < 0.001 at 160 k; n = 3, so statistical power is low).
+At 1.6 M triples neither baseline finished within an hour.
+
+**Rule quality and temporal sensitivity** (E3/E4, 160 k triples,
+[`scripts/evaluate_quality.py`](scripts/evaluate_quality.py)), scored against
+the two rules the generator plants:
+
+| System | Rules mined | Comparable | Precision | Recall | Planted transient rule |
+| --- | --- | --- | --- | --- | --- |
+| **TSARM** | 4 | 4 | 0.50 | 1.00 | *decaying*: confidence 1.00 → 0.20, detected (TS = 1.0) |
+| AMIE+ | 40 | 40 | 0.05 | 1.00 | pooled confidence 1.0, no change visible |
+| RDFRules | 226 887 | 40 | 0.05 | 1.00 | pooled confidence 1.0, no change visible |
+
+All three systems find both planted rules. TSARM's two extra rules are their
+converses (Org ⇒ Class), which hold in the data but were not planted; scoring
+is strict, so they count as false positives. TSARM classifies both as
+*transient*, because their confidence stays below τ = 0.70 in every window. "Comparable" means a rule can be
+written as TSARM items (one variable, constant objects); the other RDFRules
+rules use variable chains and are not scored. The baselines mine the pooled
+graph, so they rate the planted transient rule as fully confident and cannot
+show that it collapsed.
 
 > **SANSA:** its ARM module (AmieSpark) exists only in the legacy SANSA v0.7.1
 > (Scala 2.11 / Spark 2.x) and was removed from current SANSA — incompatible
@@ -134,11 +153,45 @@ export JAVA_HOME="/opt/homebrew/opt/openjdk@17"
 python3 scripts/scale_test.py 2000 10000 40000   # entity counts -> results/scale_test.csv
 ```
 
-On the M1 dev machine, pipeline runtime stays roughly flat (~10–16 s) as the
-triple count grows 20× (16k → 320k), i.e. throughput rises from ~1k to ~19k
-triples/s as fixed Spark startup overhead amortises — the expected distributed
-scaling profile. The injected persistent rule scores persistence 1.0 while the
-transient rule decays, confirming temporal sensitivity at scale.
+#### Core scaling on one machine (experiment E1)
+
+[`scripts/core_scaling.py`](scripts/core_scaling.py) runs the full pipeline
+(ingest → window → mine + recount → temporal metrics) with Spark `local[p]`.
+Each core count gets one discarded warm-up run, then 3 measured runs. Shuffle
+partitions are fixed, so every run does identical work. Results are saved with
+a hardware fingerprint.
+
+```bash
+python3 scripts/core_scaling.py --mode strong --cores 1,2,4,8,15 --entities 1500000
+python3 scripts/core_scaling.py --mode weak   --cores 1,2,4,8,15 --entities 150000
+```
+
+**Strong scaling**: 12M triples, Apple M5 Pro (15 cores, 24 GB), mean ± SD of
+3 runs:
+
+| Cores | Runtime | Speedup | Efficiency | Serial fraction (Karp–Flatt) |
+| --- | --- | --- | --- | --- |
+| 1 | 122.9 ± 4.7 s | 1.00 | 1.00 | n/a |
+| 2 | 52.5 ± 4.3 s | 2.34 | 1.17 | −0.15 |
+| 4 | 38.3 ± 4.4 s | 3.21 | 0.80 | 0.08 |
+| 8 | 32.7 ± 9.6 s | 3.76 | 0.47 | 0.16 |
+| 15 | 25.6 ± 5.1 s | **4.81** | 0.32 | 0.15 |
+
+On a 10× smaller input (1.2M triples) the serial fraction is 0.31–0.50 and
+speedup peaks at 2.25×. Fixed coordination costs dominate small inputs, and
+larger inputs scale better.
+
+**Weak scaling**: 150k entities per core (1.2M → 18M triples). Per-worker
+efficiency is about 1.0 up to 4 cores (1.06, 0.98) and 0.75 at 8 cores. At 15
+cores it drops to about 0.3 (re-measured with 5 runs). Giving Spark a larger
+heap made it *worse*, which points to the 24 GB of physical memory, not CPU,
+as the single-node limit at high core counts. Pooling memory across nodes
+(experiment E2, [`docs/oracle_cluster.md`](docs/oracle_cluster.md)) is the
+remedy.
+
+The injected persistent rule scores persistence 1.0 (*stable*) and the
+transient rule is classified *decaying*, confirming temporal sensitivity at
+scale.
 
 ### Real-world data (DBpedia)
 
@@ -154,8 +207,8 @@ curl -L -o data/raw/dbpedia_2016-10_instance_types_en.ttl.bz2 \
   https://downloads.dbpedia.org/2016-10/core-i18n/en/instance_types_en.ttl.bz2
 ```
 
-Result on the M1 dev machine: **10.2 M real triples** ingested at ~151 k
-triples/s; 5.58 M distinct entities; 236 k entities whose type was *refined*
+Result on the Apple M5 Pro: **10.2 M real triples** ingested in 12.3 s
+(~831 k triples/s; 26 s end to end); 5.58 M distinct entities; 236 k entities whose type was *refined*
 between releases. Mining surfaces the type-evolution rule
 `type=owl:Thing ⇒ type=dbo:Person` (confidence 0.52, lift 4.57) — generic
 entities reclassified to a specific class across releases, the evolving-KG
@@ -168,17 +221,48 @@ release, so richer rules need a multi-predicate dump such as
 [`scripts/run_dbpedia_temporal.py`](scripts/run_dbpedia_temporal.py) adds the
 2016-04 release for **three** snapshots, giving two overlapping windows
 (`{2015-10, 2016-04}`, `{2016-04, 2016-10}`) and so a real confidence trajectory
-per rule (15.4 M triples). TSARM's temporal metrics then distinguish:
+per rule (15.4 M triples, 43 s end to end on an Apple M5 Pro). Each candidate
+rule's confidence is recounted in *every* window, including windows where it was
+below the mining threshold, so its trajectory is exact:
 
-| Rule | Windows | Confidence | Drift | Persistence |
-| --- | --- | --- | --- | --- |
-| `owl:Thing ⇒ Person` | w0, w1 | 0.299 → 0.344 | +0.045 | 1.0 (persistent) |
-| `Person ⇒ owl:Thing` | w1 only | 0.213 | 0.0 | 0.5 (transient) |
+| Rule | Frequent in | Confidence (w0 → w1) | Drift | Persistence | Lifecycle |
+| --- | --- | --- | --- | --- | --- |
+| `owl:Thing ⇒ Person` | w0, w1 | 0.299 → 0.344 | +0.045 | 1.0 | stable |
+| `Person ⇒ owl:Thing` | w1 | 0.093 → 0.213 | +0.120 | 0.5 | emerging |
 
-The persistent rule's confidence *rises* across the 2015→2016 releases (positive
-drift), while the second rule appears only in the later window — exactly the
-temporal significance signal (objectives ii & iv) the metrics are designed to
-capture, here on real evolving-KG data.
+The first rule holds in both windows with drift inside the ±0.05 stability band.
+The second is not absent from the earlier window: it is already present at
+confidence 0.093, below the mining threshold, and more than doubles. TSARM
+therefore classifies it as an *emerging* rule, the temporal significance signal
+(objectives ii & iv) the metrics are designed to capture, here on real
+evolving-KG data. Zero-padding absent windows would misreport this rule as
+transient.
+
+#### Class items with the DBpedia ontology
+
+With `--item-mode class`, each entity's items are its classes plus their
+ancestors in the DBpedia ontology's own hierarchy (710 classes, depth 6;
+schema.org/DOLCE mappings excluded):
+
+```bash
+bash scripts/download_dbpedia.sh        # releases + ontology (Databus, Wayback fallback)
+python3 scripts/run_dbpedia_temporal.py --item-mode class --tag class_dbo_full
+```
+
+Class items are mined by a level-wise miner ([`src/mining/generalized.py`](src/mining/generalized.py))
+that caps itemsets at three items and never builds an itemset holding a class
+together with one of its ancestors (Srikant & Agrawal, 1995). Such itemsets are
+redundant, and Spark's FP-Growth can neither skip them nor cap their length.
+Without a hierarchy the miner returns exactly FP-Growth's rules (tested). On the
+three releases it finds generalised rules such as `owl:Thing ⇒ Agent`, whose
+confidence rises from 0.302 to 0.353.
+
+#### Valid-time windows
+
+[`scripts/run_wikidata_temporal.py`](scripts/run_wikidata_temporal.py) can also
+window one dump by the *valid time* of its statements (Wikidata P580/P582/P585),
+with calendar windows `[t, t+δ)`:
+`--snapshots 2026-11 --valid-time 1975-01,2025-01,60,60`.
 
 ## Install / reproducibility
 

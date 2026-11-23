@@ -7,6 +7,7 @@ import pytest
 from src.evaluation.scaling import (
     efficiency,
     hardware_fingerprint,
+    karp_flatt,
     speedup,
     strong_scaling_table,
     summarize,
@@ -26,6 +27,15 @@ def test_basic_formulas():
     # Degenerate inputs do not divide by zero.
     assert throughput(10, 0) == 0.0 and speedup(1, 0) == 0.0
     assert efficiency(1, 0) == 0.0 and weak_scaling_ratio(0, 1) == 0.0
+
+
+def test_karp_flatt():
+    # Perfect speedup -> no serial fraction.
+    assert karp_flatt(4.0, 4) == pytest.approx(0.0)
+    # Amdahl with f = 0.1 at p = 10: S = 1 / (0.1 + 0.9/10) -> e = 0.1
+    s = 1 / (0.1 + 0.9 / 10)
+    assert karp_flatt(s, 10) == pytest.approx(0.1)
+    assert math.isnan(karp_flatt(1.0, 1))
 
 
 def test_summarize_mean_sd_and_t_interval():
