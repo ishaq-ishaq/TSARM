@@ -56,6 +56,8 @@ python3 scripts/core_scaling.py --mode weak   --cores 1,2,4,8,15 --entities 1500
 
 - Azure for Students, 4 (or 3) × Standard_D2s_v5 (2 vCPU, 8 GB, not burstable): `docs/azure.md` Phase B
   (`--cores 1,2,4,8`, or `1,2,3,6` on three nodes).
+- AWS Free plan, 4 × m7i-flex.large (2 vCPU, 8 GB; replication, as flex CPUs are not guaranteed at every moment):
+  `docs/aws.md`.
 
 - Google Cloud free trial, 4 × e2-standard-2 (2 vCPU, 8 GB): `docs/gcp.md` Phase B
   (`--cores 1,2,4,8 --entities 1500000`, the same 12M triples as E1).

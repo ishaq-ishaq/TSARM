@@ -15,16 +15,29 @@ the `az` tool already installed. Nothing needs to be installed on your Mac.
 
 | Item | Size | Estimated cost |
 |---|---|---|
-| Phase A VM `Standard_E4s_v5` (4 vCPU, 32 GB), about 4 days | 96 h × ~$0.25/h | ~$25 |
+| Phase A VM `Standard_DS12_v2` (4 vCPU, 28 GB), 2–4 days | 48–96 h × ~$0.37/h | ~$18–36 |
 | Phase A disk, 300 GB Standard SSD, about 4 days | | ~$3 |
-| Phase B, 4 × `Standard_D2s_v5` (2 vCPU, 8 GB), about 10 h | 10 h × ~$0.40/h | ~$4 |
+| Phase B, 4 × `Standard_DS1_v2` (1 vCPU, 3.5 GB), about 10 h | 10 h × ~$0.30/h | ~$3 |
 | Public IP addresses and Cloud Shell storage | | ~$1 |
-| **Total** | | **about $35 of the $100** |
+| **Total** | | **about $25–45 of the $100** |
 
 Prices are approximate East US pay-as-you-go rates. Other regions cost up to
 about 20 % more. The **Cost Management** page shows the real figures.
 
-> **Student-subscription rules that matter here.**
+> **What a student subscription actually allows (checked 23 Nov 2026).**
+> - **Regions:** only `southafricanorth`, `francecentral`, `switzerlandnorth`,
+>   `spaincentral` and `belgiumcentral` (policy *Allowed resource deployment
+>   regions*; see `az policy assignment list`).
+> - **vCPUs:** at most **6** at once per region, and at most **4** from any one
+>   family. The current v5 families (`Dsv5`, `Esv5`) are set to **0**; older
+>   families (`DSv2`, `DSv3`, `DSv4`, `ESv3`, ...) allow 4. Burstable B-series
+>   allows 10, but its CPU is throttled, which spoils timings.
+> - **Sizes that were accepted** in South Africa North: `Standard_DS12_v2`
+>   (4 vCPU, 28 GB) for Phase A; `Standard_DS1_v2` (1 vCPU, 3.5 GB) is offered
+>   for Phase B. `E4s_v3` and `E4as_v4` were refused.
+> - New subscriptions must first register the resource providers (Step 1.3).
+>
+> **General rules.**
 > - **Spending limit:** when the $100 is used up, Azure stops the resources.
 >   Nothing is ever charged to you.
 > - **Regions:** only some regions are allowed. Creating a resource elsewhere
@@ -53,7 +66,14 @@ Azure for Students subscription, the amount to **$60**, and alerts at 50 %,
    **create one for you**. It costs a few cents a month. It keeps your SSH key
    between sessions, which you need to log back in to the VMs on later days.
    (Without storage, the key is lost when the session closes.)
-3. Create a resource group in a region near you. Try South Africa North first:
+3. Register the services once (a new subscription has none), then create a
+   resource group in an allowed region:
+
+   ```bash
+   for ns in Microsoft.Compute Microsoft.Network Microsoft.Storage Microsoft.CloudShell; do az provider register --namespace $ns; done
+   until [ "$(az provider show -n Microsoft.Compute --query registrationState -o tsv)" = Registered ]; do sleep 15; done
+   ```
+
 
    ```bash
    REGION=southafricanorth
@@ -62,20 +82,19 @@ Azure for Students subscription, the amount to **$60**, and alerts at 50 %,
 
    If this fails with `RequestDisallowedByAzure`, pick one of the regions
    listed in the error, set `REGION` to it, and run the command again.
-   `northeurope`, `westeurope` and `eastus` are usually allowed.
+   The allowed regions are listed by `az policy assignment list -o json`.
 4. **Check the vCPU quota** in that region:
 
    ```bash
-   az vm list-usage -l $REGION -o table | grep -E "Total Regional vCPUs|DSv5|ESv5"
+   az vm list-usage -l $REGION -o table | grep -E "Total Regional vCPUs|DSv2|DSv5|ESv5"
    ```
 
    The **Limit** column shows the caps. Choose the plan from this table:
 
    | Total Regional vCPUs limit | Phase A VM | Phase B cluster |
    |---|---|---|
-   | 8 or more | `Standard_E4s_v5` (4 vCPU, 32 GB) | 4 × `Standard_D2s_v5` (8 vCPUs) |
-   | 6 | `Standard_E4s_v5` | 3 × `Standard_D2s_v5` (6 vCPUs) |
-   | 4 | `Standard_E4s_v5` | 2 × `Standard_D2s_v5`, or ask for more quota (below) |
+   | 8 or more, v5 allowed | `Standard_E4s_v5` (4 vCPU, 32 GB) | 4 × `Standard_D2s_v5` (8 vCPUs) |
+   | 6, v5 = 0 (typical student) | `Standard_DS12_v2` (4 vCPU, 28 GB) | 4 × `Standard_DS1_v2` (1 vCPU, 3.5 GB) |
 
    If the ESv5 family limit is 0, use `Standard_D4s_v5` (4 vCPU, 16 GB) for
    Phase A instead. **Phase A and Phase B never run at the same time**, so the
@@ -99,7 +118,7 @@ Azure for Students subscription, the amount to **$60**, and alerts at 50 %,
 ### A1. Create the VM
 
 ```bash
-az vm create -g tsarm -n tsarm-data --image Ubuntu2404 --size Standard_E4s_v5 \
+az vm create -g tsarm -n tsarm-data --image Ubuntu2404 --size Standard_DS12_v2 \
     --vnet-name tsarm-vnet --subnet default \
     --os-disk-size-gb 300 --storage-sku StandardSSD_LRS \
     --admin-username azureuser --generate-ssh-keys
@@ -141,6 +160,15 @@ bash scripts/download_wikidata.sh             # then the other six
 bash scripts/download_dbpedia.sh              # optional: DBpedia releases + ontology
 ```
 
+**How long it takes.** On 200 random Wikidata entities (mean 20 KB of JSON
+each), the extractor processed about 8,000 entities/s on one M5 core, 14,000
+with 2 workers and 21,000 with 4. Decompression alone ran at about 74,000
+entities/s, so it is not the bottleneck. A cloud vCPU is slower than an M5
+core, so expect roughly 10,000 entities/s on 4 vCPUs. At that rate the 2026-11
+dump (about 120 million entities) takes about 3–4 hours, and the whole series
+about half a day of processing. The download from the Internet Archive
+usually takes longer than the processing, so allow 1–2 days in total.
+
 Detach with **Ctrl-b** then **d**. You can now close the browser. To check on
 the job later, open Cloud Shell, `ssh azureuser@<ip>`, then
 `tmux attach -t wikidata`. Filtered files appear in
@@ -153,7 +181,7 @@ these *on the VM*, in `tmux`:
 
 ```bash
 cd ~/TSARM && source ~/tsarm-env.sh
-export TSARM_DRIVER_MEMORY=24g      # E4s_v5 has 32 GB; use 12g on a 16 GB D4s_v5
+export TSARM_DRIVER_MEMORY=22g      # DS12_v2 has 28 GB (24g on a 32 GB E4s_v5; 12g on 16 GB)
 python3 scripts/run_wikidata_temporal.py --sample 0.01 --tag az_s001          # quick check
 python3 scripts/run_wikidata_temporal.py --sample 0.10 --tag az_s010
 python3 scripts/run_wikidata_temporal.py --tag az_full                         # h = 1, all data
@@ -211,7 +239,7 @@ In Cloud Shell:
 ```bash
 N=4
 for n in $(seq 1 $N); do
-  az vm create -g tsarm -n tsarm-$n --image Ubuntu2404 --size Standard_D2s_v5 \
+  az vm create -g tsarm -n tsarm-$n --image Ubuntu2404 --size Standard_DS1_v2 \
       --vnet-name tsarm-vnet --subnet default --storage-sku StandardSSD_LRS \
       --admin-username azureuser --generate-ssh-keys --no-wait
 done
@@ -239,14 +267,18 @@ done; wait
 
 ### B3. Start Spark
 
-Each VM has 2 vCPUs and 8 GB, so each worker offers **2 cores and 5 GB**:
+With `DS1_v2` nodes (1 vCPU, 3.5 GB) each worker offers **1 core and 2.5 GB**. With 2-vCPU, 8 GB
+nodes on a subscription that allows them, use `WORKER_CORES=2 WORKER_MEMORY=5g` instead.
+
+**Quota note:** `DS12_v2` (Phase A) and `DS1_v2` belong to the same family (DSv2, limit 4 vCPUs),
+so **deallocate or delete `tsarm-data` before creating the cluster**.
 
 ```bash
 ssh azureuser@<ip1> "bash ~/TSARM/scripts/cluster/start_master.sh"
 # prints: Master starting: spark://10.0.0.X:7077   <- write this URL down
 MASTER=spark://10.0.0.X:7077
 for ip in <ip1> <ip2> <ip3> <ip4>; do
-  ssh azureuser@$ip "WORKER_CORES=2 WORKER_MEMORY=5g bash ~/TSARM/scripts/cluster/start_worker.sh $MASTER"
+  ssh azureuser@$ip "WORKER_CORES=1 WORKER_MEMORY=2500m bash ~/TSARM/scripts/cluster/start_worker.sh $MASTER"
 done
 ssh azureuser@<ip1> "curl -s localhost:8080/json/ | grep -o 'aliveworkers.*'"   # expect N
 ```
@@ -254,13 +286,14 @@ ssh azureuser@<ip1> "curl -s localhost:8080/json/ | grep -o 'aliveworkers.*'"   
 ### B4. Run experiment E2
 
 There is no shared disk, so **every node needs the same input files**. The
-generator is deterministic, so each node creates identical copies. These are
-the same 12 million triples as the single-machine experiment E1:
+generator is deterministic, so each node creates identical copies. On 3.5 GB
+nodes use 2.4 million triples (`--entities 300000`); on 8 GB nodes the 12 million
+triples of E1 (`--entities 1500000`, `--cores 1,2,4,8`):
 
 ```bash
 for ip in <ip1> <ip2> <ip3> <ip4>; do
   ssh azureuser@$ip "source ~/tsarm-env.sh && cd ~/TSARM && \
-    python3 scripts/core_scaling.py --generate-only --data-dir ~/tsarm-data --mode strong --cores 1,2,4,8 --entities 1500000" &
+    python3 scripts/core_scaling.py --generate-only --data-dir ~/tsarm-data --mode strong --cores 1,2,3,4 --entities 300000" &
 done; wait
 ```
 
@@ -269,14 +302,14 @@ Then log in to tsarm-1 (`ssh azureuser@<ip1>`) and run, inside `tmux`:
 ```bash
 tmux new -s e2
 source ~/tsarm-env.sh && cd ~/TSARM
-TSARM_DRIVER_MEMORY=2g python3 scripts/core_scaling.py \
+TSARM_DRIVER_MEMORY=1g python3 scripts/core_scaling.py \
     --master-url spark://10.0.0.X:7077 --data-dir ~/tsarm-data \
-    --mode strong --cores 1,2,4,8 --entities 1500000 --executor-memory 2g --tag azure
+    --mode strong --cores 1,2,3,4 --entities 300000 --executor-memory 1500m --tag azure
 ```
 
-- `p` is the number of 1-core executors, spread across the workers. With 4
-  nodes, use `--cores 1,2,4,8`. With 3 nodes, use `--cores 1,2,3,6`. With 2
-  nodes, use `--cores 1,2,4`.
+- `p` is the number of 1-core executors, spread across the workers. On 4 × `DS1_v2`,
+  p = 1–4 puts one executor on each of 1–4 machines. (On 4 × 2-vCPU nodes use
+  `--cores 1,2,4,8`; on 3 nodes `--cores 1,2,3,6`.)
 - Every run records `executors_granted`. A **WARNING** line means the run got
   fewer executors than requested; discard that run.
 - On an out-of-memory error, use `--entities 300000` (2.4 million triples).

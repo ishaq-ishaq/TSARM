@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # One-time setup of a TSARM Spark node: an Oracle Cloud Always Free Ampere A1
-# VM, a Google Cloud VM or an Azure VM (Ubuntu 22.04/24.04, arm64 or amd64). Run on EVERY node:
+# VM, or a Google Cloud, Azure or AWS VM (Ubuntu 22.04/24.04, arm64 or amd64). Run on EVERY node:
 #     bash setup_node.sh
 # Idempotent: safe to re-run.
 set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive   # no prompts (e.g. iptables-persistent) when run over ssh
+# No interactive prompts (e.g. iptables-persistent's "Save current rules?"). The variable must be passed
+# THROUGH sudo (sudo drops the environment), and the iptables-persistent answers are preseeded below.
+APT="sudo DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
 REPO_URL="${REPO_URL:-https://github.com/ishaq-ishaq/TSARM.git}"
 TSARM_DIR="${TSARM_DIR:-$HOME/TSARM}"
@@ -12,8 +14,8 @@ VENV="${VENV:-$HOME/tsarm-venv}"
 SUBNET="${SUBNET:-10.0.0.0/16}"   # the VCN's private address range
 
 echo "==> System packages (Java 17, Python, parallel bzip2, rsync)"
-sudo apt-get update -y
-sudo apt-get install -y openjdk-17-jre-headless python3-venv python3-pip \
+$APT update -y
+$APT install -y openjdk-17-jre-headless python3-venv python3-pip \
     lbzip2 pigz rsync git
 
 echo "==> Allow Spark traffic between nodes on the private subnet"
@@ -21,7 +23,9 @@ echo "==> Allow Spark traffic between nodes on the private subnet"
 # subnet only (nothing is exposed to the internet).
 if ! sudo iptables -C INPUT -s "$SUBNET" -j ACCEPT 2>/dev/null; then
     sudo iptables -I INPUT -s "$SUBNET" -j ACCEPT
-    sudo apt-get install -y iptables-persistent
+    echo iptables-persistent iptables-persistent/autosave_v4 boolean true | sudo debconf-set-selections
+    echo iptables-persistent iptables-persistent/autosave_v6 boolean true | sudo debconf-set-selections
+    $APT install -y iptables-persistent
     sudo netfilter-persistent save
 fi
 
