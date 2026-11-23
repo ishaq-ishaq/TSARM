@@ -19,7 +19,7 @@ the `az` tool already installed. Nothing needs to be installed on your Mac.
 | Phase A disk, 300 GB Standard SSD, about 4 days | | ~$3 |
 | Phase B, 4 × `Standard_D2s_v5` (2 vCPU, 8 GB), about 10 h | 10 h × ~$0.40/h | ~$4 |
 | Public IP addresses and Cloud Shell storage | | ~$1 |
-| **Total** | | **about $35 of the $100** |
+| **Total** | | **about $20–35 of the $100** |
 
 Prices are approximate East US pay-as-you-go rates. Other regions cost up to
 about 20 % more. The **Cost Management** page shows the real figures.
