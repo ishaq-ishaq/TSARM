@@ -6,7 +6,8 @@
 set -euo pipefail
 # No interactive prompts (e.g. iptables-persistent's "Save current rules?"). The variable must be passed
 # THROUGH sudo (sudo drops the environment), and the iptables-persistent answers are preseeded below.
-APT="sudo DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+# On a fresh VM, unattended-upgrades may hold the package lock for a while: wait for it (up to 15 min).
+APT="sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=900 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
 REPO_URL="${REPO_URL:-https://github.com/ishaq-ishaq/TSARM.git}"
 TSARM_DIR="${TSARM_DIR:-$HOME/TSARM}"

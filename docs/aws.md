@@ -1,169 +1,98 @@
-# AWS Free plan: experiment E2 on a 4-node cluster
+# AWS Free plan: experiment E2 on an 8-node cluster
 
 The AWS **Free plan** gives $100 of credit (or up to $200 if you complete the
-console activities) for 6 months. On this plan only *free-tier-eligible*
-instance types can be launched. The largest is **`m7i-flex.large`** (2 vCPU,
-8 GB). That is too small to mine the full Wikidata series, which runs on
-Azure (`docs/azure.md`, Phase A). It is enough for the multi-node Spark
-experiment E2, which this guide runs. Repeating E2 on a second provider shows
-that the scaling result does not depend on one cloud.
+console activities) for 6 months. On this plan:
 
-Everything is done in **AWS CloudShell**, a terminal in the console with the
-`aws` tool installed. Its home directory persists between sessions, so the
-SSH key created below stays available.
+- Only *free-tier-eligible* instance types can be launched. The largest is
+  **`m7i-flex.large`** (2 vCPU, 8 GB).
+- The account works in **one assigned region**. Ours is **Europe (Stockholm),
+  `eu-north-1`**. Other regions show "Region unavailable" until the plan is
+  upgraded.
+- The vCPU quota *Running On-Demand Standard instances* (L-1216C47A) is
+  **16** in `eu-north-1` (checked 2026-11-23). It is 5 in regions the plan
+  cannot use.
+
+Sixteen vCPUs give **8 × `m7i-flex.large`**: one node is the Spark master and
+driver, and 7 are workers with 2 cores each. E2 therefore tests
+**p = 1, 2, 4, 8, 14** executor cores. This is the largest E2 configuration
+available to us, so AWS hosts the primary E2 run. The Wikidata series is
+processed on Azure (`docs/azure.md`, Phase A).
 
 | Item | Size | Estimated cost |
 |---|---|---|
-| 4 × `m7i-flex.large` (2 vCPU, 8 GB), about 10 h | 10 h × 4 × ~$0.10/h | ~$4 |
-| 4 × 30 GB gp3 disks, public IPv4 addresses | | < $1 |
+| 8 × `m7i-flex.large`, about 4-6 h | 8 × ~$0.10/h | ~$3-5 |
+| 8 × 30 GB gp3 disks, public IPv4 addresses | | < $1 |
 | **Total** | | **about $5 of the credit** |
 
-Prices are for `us-east-1` (N. Virginia), the cheapest region.
-
 > **Flex instances.** `m7i-flex` instances deliver their full CPU most of the
-> time but are not guaranteed it at every moment. Report the AWS runs as a
-> replication of E2, with this stated. The primary E2 numbers come from Azure's
-> non-burstable `D2s_v5` nodes.
+> time but are not guaranteed it at every moment. Report this with the E2
+> results; the repeated runs and confidence intervals show the variation.
 
 ---
 
-## Step 0: Checks (once)
+## How it runs
 
-1. **Budget:** console → **Billing and Cost Management** → **Budgets** →
-   **Create budget** → *Monthly cost budget*, $50, with your email address.
-2. **vCPU quota:** console → **Service Quotas** → **Amazon EC2** → search
-   *Running On-Demand Standard (A, C, D, H, I, M, R, T, Z) instances*. The
-   **Applied quota value** is in vCPUs. You need **8** for four nodes. With 6,
-   use 3 nodes; with 4, use 2 nodes (`N` below). If it is lower, click
-   **Request increase at account level**.
-3. Switch the console to **US East (N. Virginia)** (region menu, top right),
-   then open **CloudShell** (the `>_` icon in the top bar).
+Everything is started from **AWS CloudShell** (the `>_` icon in the console's
+top bar, with the console set to **Europe (Stockholm)**). Its home directory
+persists between sessions, so the SSH key stays available.
 
-## Step 1: Key, firewall and image (in CloudShell)
+`scripts/cluster/aws_e2_launch.sh launch` creates a key pair, a security group
+(SSH from anywhere with the key only; all traffic between the nodes), the
+master, then the 7 workers. Each node's user data clones this repository and
+runs `scripts/cluster/aws_e2_node.sh`, which:
+
+1. installs Java 17 and PySpark (`setup_node.sh`);
+2. generates the deterministic synthetic datasets in `~/tsarm-data` (the
+   12M-triple strong-scaling input of E1, and the 150k-entities-per-core
+   weak-scaling inputs), identical on every node;
+3. on a worker, registers with the master (2 cores, 5 GB) once its data exists;
+4. on the master, waits for all 7 workers, then runs strong and weak scaling
+   (`core_scaling.py --master-url ... --executor-memory 2g --tag aws`, driver
+   4 GB), and packs `results/cluster_scaling_*` into `~/e2-results.tgz`.
+
+If strong scaling at 12M triples fails (for example, out of memory at p = 1),
+the master repeats it at 300,000 entities with the tag `aws_small`.
+
+**Cost guards:** every node powers off after 24 hours whatever happens.
+Workers power off and are terminated 10 minutes after the master finishes. The
+master powers off 12 hours after finishing; a stopped master keeps its disk,
+and therefore the results, until `cleanup`.
+
+## Commands (in CloudShell)
 
 ```bash
-export AWS_DEFAULT_REGION=us-east-1
-mkdir -p ~/.ssh
-aws ec2 create-key-pair --key-name tsarm --query KeyMaterial --output text > ~/.ssh/tsarm.pem
-chmod 600 ~/.ssh/tsarm.pem
-
-SG=$(aws ec2 create-security-group --group-name tsarm --description "TSARM Spark cluster" --query GroupId --output text)
-aws ec2 authorize-security-group-ingress --group-id $SG --protocol tcp --port 22 --cidr 0.0.0.0/0      # SSH (key only)
-aws ec2 authorize-security-group-ingress --group-id $SG --protocol -1 --source-group $SG               # nodes reach each other
-echo "SG=$SG" > ~/tsarm-aws.env
-
-AMI=$(aws ssm get-parameter --name /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id \
-      --query Parameter.Value --output text)
-echo "AMI=$AMI" >> ~/tsarm-aws.env
+curl -sLO https://raw.githubusercontent.com/ishaq-ishaq/TSARM/main/scripts/cluster/aws_e2_launch.sh
+bash aws_e2_launch.sh launch      # about 1 minute; the nodes then work alone
+bash aws_e2_launch.sh status      # node table + the master's last log lines
 ```
 
-Only SSH is open to the internet, and it accepts only your key. Spark's ports
-are open only between the four nodes.
-
-## Step 2: Create the nodes
+`status` shows `E2 DONE` when the run is finished (about 4-6 hours after
+launch, including 20-30 minutes of setup and data generation). Then:
 
 ```bash
-source ~/tsarm-aws.env
-N=4
-aws ec2 run-instances --image-id $AMI --instance-type m7i-flex.large --count $N \
-    --key-name tsarm --security-group-ids $SG \
-    --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":30,"VolumeType":"gp3"}}]' \
-    --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=tsarm}]' --query 'Instances[].InstanceId' --output text
-sleep 60
-aws ec2 describe-instances --filters Name=tag:Name,Values=tsarm Name=instance-state-name,Values=running \
-    --query 'Reservations[].Instances[].[PublicIpAddress,PrivateIpAddress]' --output table
-```
-
-Pick one node as the master and note both its addresses. Its **private**
-address starts with `172.31.`.
-
-If `run-instances` says the instance type is not eligible, list the types
-your account may use and pick the largest:
-
-```bash
-aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true \
-    --query 'InstanceTypes[].[InstanceType,VCpuInfo.DefaultVCpus,MemoryInfo.SizeInMiB]' --output table
-```
-
-## Step 3: Set up every node
-
-The default network's private range is `172.31.0.0/16`:
-
-```bash
-IPS="<ip1> <ip2> <ip3> <ip4>"        # the public addresses
-for ip in $IPS; do
-  ssh -i ~/.ssh/tsarm.pem -o StrictHostKeyChecking=accept-new ubuntu@$ip \
-    "git clone -q https://github.com/ishaq-ishaq/TSARM.git; SUBNET=172.31.0.0/16 bash TSARM/scripts/cluster/setup_node.sh" &
-done; wait
-```
-
-## Step 4: Start Spark
-
-```bash
-ssh -i ~/.ssh/tsarm.pem ubuntu@<ip1> "bash ~/TSARM/scripts/cluster/start_master.sh"
-# prints: Master starting: spark://172.31.X.X:7077   <- write this URL down
-MASTER=spark://172.31.X.X:7077
-for ip in $IPS; do
-  ssh -i ~/.ssh/tsarm.pem ubuntu@$ip "WORKER_CORES=2 WORKER_MEMORY=5g bash ~/TSARM/scripts/cluster/start_worker.sh $MASTER"
-done
-ssh -i ~/.ssh/tsarm.pem ubuntu@<ip1> "curl -s localhost:8080/json/ | grep -o 'aliveworkers.*'"   # expect N
-```
-
-## Step 5: Run E2
-
-Every node generates the same input. The generator is deterministic, so the
-copies are identical. The input is the same 12 million triples as E1:
-
-```bash
-for ip in $IPS; do
-  ssh -i ~/.ssh/tsarm.pem ubuntu@$ip "source ~/tsarm-env.sh && cd ~/TSARM && \
-    python3 scripts/core_scaling.py --generate-only --data-dir ~/tsarm-data --mode strong --cores 1,2,4,8 --entities 1500000" &
-done; wait
-ssh -i ~/.ssh/tsarm.pem ubuntu@<ip1>
-```
-
-*On the master*, inside `tmux`:
-
-```bash
-tmux new -s e2
-source ~/tsarm-env.sh && cd ~/TSARM
-TSARM_DRIVER_MEMORY=2g python3 scripts/core_scaling.py \
-    --master-url spark://172.31.X.X:7077 --data-dir ~/tsarm-data \
-    --mode strong --cores 1,2,4,8 --entities 1500000 --executor-memory 2g --tag aws
-```
-
-With 3 nodes, use `--cores 1,2,3,6`; with 2 nodes, `--cores 1,2,4`. Discard
-any run that prints a **WARNING** about granted executors. On an out-of-memory
-error, use `--entities 300000`.
-
-## Step 6: Bring the results home and delete everything
-
-In CloudShell:
-
-```bash
-scp -i ~/.ssh/tsarm.pem "ubuntu@<ip1>:~/TSARM/results/cluster_scaling_*" ~/
-tar czf ~/tsarm-aws-results.tgz -C ~ $(cd ~ && ls cluster_scaling_*)
+bash aws_e2_launch.sh fetch       # copies ~/tsarm-aws-results.tgz to CloudShell
+bash aws_e2_launch.sh cleanup     # terminates every node
 ```
 
 Download the archive with **Actions → Download file** →
-`/home/cloudshell-user/tsarm-aws-results.tgz`, and unpack it into
-`~/Documents/Projects/TSARM/results/` on your Mac.
+`/home/cloudshell-user/tsarm-aws-results.tgz` and unpack it in the project
+folder on the Mac. It contains `results/cluster_scaling_{strong,weak}_aws*`
+and the master's log.
 
-Then terminate the nodes. Stopped instances still pay for their disks:
+If the master was already powered off, start it first
+(`aws ec2 start-instances --instance-ids <id from status>`), wait a minute,
+then `fetch`.
 
-```bash
-source ~/tsarm-aws.env
-aws ec2 terminate-instances --instance-ids $(aws ec2 describe-instances \
-    --filters Name=tag:Name,Values=tsarm Name=instance-state-name,Values=running,stopped \
-    --query 'Reservations[].Instances[].InstanceId' --output text)
-```
+Discard any run whose log line shows a **WARNING** about granted executors:
+it used fewer executors than requested.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| `VcpuLimitExceeded` | Fewer nodes (Step 0.2), or request a quota increase |
-| `InvalidParameterCombination ... not eligible for Free Tier` | Use a type from the `free-tier-eligible` list (Step 2) |
-| `Permission denied (publickey)` | Use `-i ~/.ssh/tsarm.pem` and user `ubuntu`; the key is only in CloudShell's home in `us-east-1` |
-| Workers missing (`aliveworkers` < N) | Check `~/spark-logs/worker.log` on that node; is the security-group rule from Step 1 present? |
-| Credit running low | **Billing → Bills** shows what is spending; terminate idle instances |
+| `VcpuLimitExceeded` | Check the quota in **Service Quotas** for `eu-north-1`; with 8 vCPUs use `WORKERS=3 bash aws_e2_launch.sh launch` and report p = 1, 2, 4, 6 |
+| `... not eligible for Free Tier` | `aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true --query 'InstanceTypes[].[InstanceType,VCpuInfo.DefaultVCpus]'`, then `TYPE=<type> bash aws_e2_launch.sh launch` |
+| "Region unavailable" in the console | Switch the console back to **Europe (Stockholm)** |
+| `status` shows fewer than 7 workers alive after 90 min | The master runs with the workers it has; check a worker with `ssh -i ~/.ssh/tsarm.pem ubuntu@<ip> tail ~/e2-node.log` |
+| `SETUP FAILED` or `GENERATE FAILED` in a log | `cleanup`, then `launch` again |
+| Credit running low | **Billing → Bills** shows what is spending; `cleanup` |
