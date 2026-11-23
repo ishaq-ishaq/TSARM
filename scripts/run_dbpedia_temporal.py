@@ -60,9 +60,9 @@ def _short(item: str) -> str:
     return item.split("/")[-1].split("#")[-1]
 
 
-def find_releases(spec: str):
+def find_releases(spec: str, raw_dir: Path = RAW):
     found = {}
-    for f in sorted(RAW.glob("dbpedia_*_instance_types_en.ttl.bz2")):
+    for f in sorted(raw_dir.glob("dbpedia_*_instance_types_en.ttl.bz2")):
         m = _NAME.search(f.name)
         if m:
             found[m.group(1)] = (f, datetime.strptime(m.group(1), "%Y-%m"))
@@ -71,7 +71,7 @@ def find_releases(spec: str):
     wanted = [r.strip() for r in spec.split(",") if r.strip()]
     missing = [r for r in wanted if r not in found]
     if missing:
-        sys.exit(f"Missing DBpedia release(s) {missing} in {RAW}. Run scripts/download_dbpedia.sh first.")
+        sys.exit(f"Missing DBpedia release(s) {missing} in {raw_dir}. Run scripts/download_dbpedia.sh first.")
     return {r: found[r] for r in wanted}
 
 
@@ -90,10 +90,12 @@ def main() -> None:
                     help="keep only hierarchy edges within this namespace ('' = keep all)")
     ap.add_argument("--miner", choices=["auto", "fpgrowth", "bounded"], default="auto",
                     help="auto: bounded (ancestor-pruned, <= 3 items) for class items with superclasses, else FP-Growth")
+    ap.add_argument("--raw-dir", type=Path, default=RAW,
+                    help="directory of the release files (e.g. a sample from scripts/sample_dbpedia.py)")
     ap.add_argument("--tag", default="")
     args = ap.parse_args()
 
-    releases = find_releases(args.releases)
+    releases = find_releases(args.releases, args.raw_dir)
     if len(releases) < 2:
         sys.exit(f"Need at least two releases, found {list(releases)}.")
 
@@ -155,6 +157,7 @@ def main() -> None:
             basename=f"dbpedia_temporal_rules{suffix}",
             params={
                 "dataset": "dbpedia instance_types_en",
+                "raw_dir": str(args.raw_dir),
                 "snapshots": list(releases),
                 "triples_per_release": {r: per_release.get(r, 0) - n_edges for r in releases},
                 "width": args.width, "step": args.step,
