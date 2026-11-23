@@ -17,6 +17,7 @@ from src.evaluation.annotation import (
     stratified_sample,
     wilson_interval,
     write_reference,
+    write_retest_sheet,
     write_sheet,
 )
 from src.evaluation.quality import load_reference_rules
@@ -88,6 +89,32 @@ def test_sheet_score_reference_roundtrip(tmp_path):
     assert s.per_system["amie"]["judged"] == 1 and s.per_system["amie"]["relative_recall"] == pytest.approx(0.5)
     ref = write_reference(s.reference, tmp_path / "ref.csv", note="test")
     assert load_reference_rules(ref) == {"a => b", "c => d"}
+
+
+def test_single_annotator_retest(tmp_path):
+    keys = [f"r{i} => x" for i in range(8)]
+    pool = pool_rules([{"rule_key": k, "lifecycle": "stable"} for k in keys], {})
+    sheet = write_sheet(pool, tmp_path / "sheet.csv")
+    first = {k: ("1" if i % 2 == 0 else "0", "", "") for i, k in enumerate(keys)}
+    first["r7 => x"] = ("?", "", "")      # undecided: not re-tested, not in the reference
+    first["r5 => x"] = ("0", "", "1")     # re-examined after the retest: final overrides judge_a
+    _fill(sheet, first)
+    retest = write_retest_sheet(sheet, tmp_path / "retest.csv", fraction=0.5, seed=1)
+    rows = list(csv.DictReader(open(retest, newline="")))
+    assert len(rows) == 4 and set(rows[0]) == {"id", "rule", "readable", "labels", "links", "retest", "note"}
+    assert all(r["rule"] != "r7 => x" for r in rows)  # only decided rules are drawn
+    for r in rows:                                     # second pass: flip exactly one label
+        r["retest"] = first[r["rule"]][0]
+    rows[0]["retest"] = "0" if rows[0]["retest"] == "1" else "1"
+    with open(retest, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=rows[0].keys())
+        w.writeheader()
+        w.writerows(rows)
+    s = score_sheet(sheet, retest=retest)
+    assert s.mode == "intra-rater"
+    assert s.n_both_decided == 4 and s.n_disagreements == 1 and s.agreement == pytest.approx(0.75)
+    assert s.reference == ["r0 => x", "r2 => x", "r4 => x", "r5 => x", "r6 => x"]
+    assert score_sheet(sheet).n_both_decided == 0   # no retest given: no agreement figures
 
 
 def test_cli(tmp_path):
