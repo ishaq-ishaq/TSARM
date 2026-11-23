@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-time setup of a TSARM Spark node: an Oracle Cloud Always Free Ampere A1
-# VM or a Google Cloud VM (Ubuntu 22.04/24.04, arm64 or amd64). Run on EVERY node:
+# VM, a Google Cloud VM or an Azure VM (Ubuntu 22.04/24.04, arm64 or amd64). Run on EVERY node:
 #     bash setup_node.sh
 # Idempotent: safe to re-run.
 set -euo pipefail
