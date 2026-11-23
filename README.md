@@ -1,5 +1,7 @@
 # TSARM — Temporal Semantic Association Rule Mining
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24470493.svg)](https://doi.org/10.5281/zenodo.24470493)
+
 A scalable framework for **Temporal Semantic Association Rule Mining in Evolving
 Knowledge Graphs**, built on Apache Spark (PySpark) and RDFLib.
 
@@ -272,8 +274,9 @@ pip install -e .            # or: pip install -e ".[test,notebooks]"
 ```
 
 The project is packaged (`setup.cfg` + `pyproject.toml`), MIT-licensed, and
-ships a [`CITATION.cff`](CITATION.cff); a Zenodo DOI is to be minted on release
-(objective iii). Dependencies are pinned in [`requirements.txt`](requirements.txt).
+ships a [`CITATION.cff`](CITATION.cff). Every release is archived on Zenodo (objective iii):
+cite **all versions** with the concept DOI [10.5281/zenodo.24470493](https://doi.org/10.5281/zenodo.24470493),
+or a specific version, e.g. v0.9.0: [10.5281/zenodo.24470494](https://doi.org/10.5281/zenodo.24470494). Dependencies are pinned in [`requirements.txt`](requirements.txt).
 
 ## Ingestion design
 
