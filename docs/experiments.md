@@ -54,10 +54,11 @@ python3 scripts/core_scaling.py --mode weak   --cores 1,2,4,8,15 --entities 1500
 
 *Proposal §3.7.3 i, multi-node.* Equivalent options:
 
-- Azure for Students, 4 (or 3) × Standard_D2s_v5 (2 vCPU, 8 GB, not burstable): `docs/azure.md` Phase B
+- Azure for Students (fallback), 4 (or 3) × Standard_D2s_v5 (2 vCPU, 8 GB, not burstable): `docs/azure.md` Phase B
   (`--cores 1,2,4,8`, or `1,2,3,6` on three nodes).
-- AWS Free plan, 4 × m7i-flex.large (2 vCPU, 8 GB; replication, as flex CPUs are not guaranteed at every moment):
-  `docs/aws.md`.
+- **AWS Free plan (primary run), 8 × m7i-flex.large (2 vCPU, 8 GB) in eu-north-1**: 1 master/driver + 7 workers,
+  p = 1, 2, 4, 8, 14, strong (12M triples) and weak (150k entities per core) scaling, fully automated by
+  `scripts/cluster/aws_e2_launch.sh` (`docs/aws.md`). Flex CPUs are not guaranteed at every moment; report this.
 
 - Google Cloud free trial, 4 × e2-standard-2 (2 vCPU, 8 GB): `docs/gcp.md` Phase B
   (`--cores 1,2,4,8 --entities 1500000`, the same 12M triples as E1).
