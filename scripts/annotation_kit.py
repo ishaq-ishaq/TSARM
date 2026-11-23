@@ -16,6 +16,14 @@ following docs/annotation_guidelines.md; disagreements are settled in
     python3 scripts/annotation_kit.py score annotation/wikidata_sheet.csv \\
         --reference-out annotation/wikidata_reference.csv
 
+With one annotator, fill only ``judge_a``; at least a week later, re-label a
+blind random quarter of the rules and score against it (intra-rater kappa)::
+
+    python3 scripts/annotation_kit.py retest annotation/wikidata_sheet.csv \\
+        --out annotation/wikidata_retest.csv
+    python3 scripts/annotation_kit.py score annotation/wikidata_sheet.csv \\
+        --retest annotation/wikidata_retest.csv --reference-out annotation/wikidata_reference.csv
+
 prints Cohen's kappa and per-system precision (Wilson 95 % CI) and relative
 recall, writes the reference set, and a JSON summary next to the sheet.
 """
@@ -39,6 +47,7 @@ from src.evaluation.annotation import (  # noqa: E402
     score_sheet,
     stratified_sample,
     write_reference,
+    write_retest_sheet,
     write_sheet,
 )
 from src.evaluation.quality import amie_rule_key, rdfrules_rule_key  # noqa: E402
@@ -92,9 +101,18 @@ def cmd_sheet(args) -> None:
     print(f"wrote {out}: {len(sample)} of {len(pool)} pooled rules")
 
 
+def cmd_retest(args) -> None:
+    out = write_retest_sheet(args.sheet, args.out, fraction=args.fraction, seed=args.seed)
+    with open(out, encoding="utf-8") as fh:
+        n = sum(1 for _ in fh) - 1
+    print(f"wrote {out}: {n} rules to re-label blind (fill the 'retest' column, at least a week after the first pass)")
+
+
 def cmd_score(args) -> None:
-    s = score_sheet(args.sheet)
-    print(f"rules {s.n_rules}; both decided {s.n_both_decided}; agreement {s.agreement:.3f}; "
+    s = score_sheet(args.sheet, retest=args.retest)
+    if s.mode == "intra-rater" and not args.retest:
+        print("one annotator and no --retest sheet: agreement and kappa cannot be computed", file=sys.stderr)
+    print(f"[{s.mode}] rules {s.n_rules}; pairs {s.n_both_decided}; agreement {s.agreement:.3f}; "
           f"kappa {s.kappa:.3f}; disagreements {s.n_disagreements}; reference {len(s.reference)}")
     for system, m in s.per_system.items():
         print(f"  {system:9s} judged {m['judged']:4d}  P {m['precision']:.3f} "
@@ -120,8 +138,15 @@ def main() -> None:
     sh.add_argument("--fetch-labels", action="store_true", help="add English Wikidata labels (needs internet)")
     sh.add_argument("--out", required=True)
     sh.set_defaults(func=cmd_sheet)
+    rt = sub.add_parser("retest", help="blind re-labelling sheet for a single annotator")
+    rt.add_argument("sheet", help="the sheet with judge_a filled in")
+    rt.add_argument("--fraction", type=float, default=0.25)
+    rt.add_argument("--seed", type=int, default=7)
+    rt.add_argument("--out", required=True)
+    rt.set_defaults(func=cmd_retest)
     sc = sub.add_parser("score", help="score a filled sheet")
     sc.add_argument("sheet")
+    sc.add_argument("--retest", help="filled re-labelling sheet (single-annotator protocol)")
     sc.add_argument("--reference-out")
     sc.set_defaults(func=cmd_score)
     args = ap.parse_args()
