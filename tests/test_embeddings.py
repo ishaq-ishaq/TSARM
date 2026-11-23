@@ -117,3 +117,14 @@ def test_adjusted_rand_index_matches_sklearn():
     a = [0, 0, 1, 1, 2, 2, 2, 0, 1, 2]
     b = ["x", "x", "y", "z", "z", "z", "y", "x", "y", "x"]
     assert adjusted_rand_index(a, b) == pytest.approx(sklearn.adjusted_rand_score(a, b))
+
+
+def test_shape_only_embedding_ignores_level(spark):
+    rows = []
+    for key, confs in (("low", [0.10, 0.20, 0.30]), ("high", [0.60, 0.70, 0.80])):
+        for w, c in enumerate(confs):
+            rows.append((key, [key + "-A"], [key + "-B"], w, c / 2, c, 1.0, True))
+    m = compute_metrics(spark.createDataFrame(rows, schema=_DENSE), n_windows=3, tau=0.7)
+    emb = {r.rule_key: r.embedding for r in trajectory_embeddings(m, shape_only=True).collect()}
+    assert emb["low"] == pytest.approx([-0.1, 0.0, 0.1, 0.1, 0.1])
+    assert emb["high"] == pytest.approx(emb["low"])  # same shape, different level
