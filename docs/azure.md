@@ -15,7 +15,7 @@ the `az` tool already installed. Nothing needs to be installed on your Mac.
 
 | Item | Size | Estimated cost |
 |---|---|---|
-| Phase A VM `Standard_E4s_v5` (4 vCPU, 32 GB), about 4 days | 96 h × ~$0.25/h | ~$25 |
+| Phase A VM `Standard_E4s_v5` (4 vCPU, 32 GB), 2–4 days | 48–96 h × ~$0.25/h | ~$12–25 |
 | Phase A disk, 300 GB Standard SSD, about 4 days | | ~$3 |
 | Phase B, 4 × `Standard_D2s_v5` (2 vCPU, 8 GB), about 10 h | 10 h × ~$0.40/h | ~$4 |
 | Public IP addresses and Cloud Shell storage | | ~$1 |
@@ -140,6 +140,15 @@ bash scripts/download_wikidata.sh 2026-11     # the expiring dump FIRST
 bash scripts/download_wikidata.sh             # then the other six
 bash scripts/download_dbpedia.sh              # optional: DBpedia releases + ontology
 ```
+
+**How long it takes.** On 200 random Wikidata entities (mean 20 KB of JSON
+each), the extractor processed about 8,000 entities/s on one M5 core, 14,000
+with 2 workers and 21,000 with 4. Decompression alone ran at about 74,000
+entities/s, so it is not the bottleneck. A cloud vCPU is slower than an M5
+core, so expect roughly 10,000 entities/s on 4 vCPUs. At that rate the 2026-11
+dump (about 120 million entities) takes about 3–4 hours, and the whole series
+about half a day of processing. The download from the Internet Archive
+usually takes longer than the processing, so allow 1–2 days in total.
 
 Detach with **Ctrl-b** then **d**. You can now close the browser. To check on
 the job later, open Cloud Shell, `ssh azureuser@<ip>`, then
