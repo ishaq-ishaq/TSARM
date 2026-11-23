@@ -21,5 +21,5 @@ keywords:
   - RDF
   - temporal
   - Apache Spark
-# A Zenodo DOI will be minted on release; record it here once available.
-# doi: 10.5281/zenodo.XXXXXXX
+# Concept DOI (always resolves to the latest version); v0.9.0 is 10.5281/zenodo.24470494.
+doi: 10.5281/zenodo.24470493
