@@ -268,6 +268,32 @@ def wilson_interval(k: int, n: int, z: float = 1.959964) -> Tuple[float, float]:
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
+RETEST_COLUMNS = ["id", "rule", "readable", "labels", "links", "retest", "note"]
+
+
+def write_retest_sheet(sheet, path, fraction: float = 0.25, seed: int = 7) -> Path:
+    """Blind re-labelling sheet for the single-annotator protocol.
+
+    Draws a random ``fraction`` of the rules that ``judge_a`` decided, in a new
+    random order, without the first labels, the systems, the lifecycle class or
+    the confidences, so that the second pass is independent of the first.
+    """
+    with open(sheet, newline="", encoding="utf-8") as fh:
+        rows = [r for r in csv.DictReader(fh) if _judgement(r["judge_a"]) is not None]
+    if not rows:
+        raise ValueError(f"{sheet}: no rule has a decided judge_a label yet")
+    k = max(1, round(fraction * len(rows)))
+    picked = random.Random(seed).sample(rows, min(k, len(rows)))
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=RETEST_COLUMNS)
+        w.writeheader()
+        for r in picked:
+            w.writerow({c: r.get(c, "") for c in RETEST_COLUMNS[:5]} | {"retest": "", "note": ""})
+    return path
+
+
 @dataclass
 class AnnotationScore:
     n_rules: int
@@ -277,21 +303,41 @@ class AnnotationScore:
     n_disagreements: int
     reference: List[str]
     per_system: Dict[str, Dict[str, float]]
+    mode: str = "inter-rater"  # "inter-rater" (judge_a vs judge_b) or "intra-rater" (judge_a vs retest)
 
 
-def score_sheet(path) -> AnnotationScore:
-    """Agreement, reference set and per-system precision / relative recall."""
+def score_sheet(path, retest=None) -> AnnotationScore:
+    """Agreement, reference set and per-system precision / relative recall.
+
+    Two annotators: agreement and kappa compare ``judge_a`` with ``judge_b``,
+    and a rule's verdict is ``final`` if given, else the agreed label.
+
+    One annotator (``judge_b`` empty throughout): pass the blind re-labelling
+    sheet as ``retest``. Agreement and kappa then compare each re-labelled
+    rule's ``judge_a`` with its ``retest`` label (intra-rater reliability), and
+    a rule's verdict is ``final`` if given, else ``judge_a``.
+    """
     with open(path, newline="", encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
+    single = all(_judgement(r.get("judge_b", "")) is None for r in rows)
     pairs, verdict, disagreements = [], {}, 0
+    if single:
+        first = {r["rule"]: _judgement(r["judge_a"]) for r in rows}
+        if retest is not None:
+            with open(retest, newline="", encoding="utf-8") as fh:
+                for r in csv.DictReader(fh):
+                    a, b = first.get(r["rule"]), _judgement(r["retest"])
+                    if a is not None and b is not None:
+                        pairs.append((a, b))
+                        disagreements += a != b
     for r in rows:
-        a, b, final = _judgement(r["judge_a"]), _judgement(r["judge_b"]), _judgement(r.get("final", ""))
-        if a is not None and b is not None:
+        a, b, final = _judgement(r["judge_a"]), _judgement(r.get("judge_b", "")), _judgement(r.get("final", ""))
+        if not single and a is not None and b is not None:
             pairs.append((a, b))
             disagreements += a != b
         if final is not None:
             verdict[r["rule"]] = final
-        elif a is not None and a == b:
+        elif a is not None and (single or a == b):
             verdict[r["rule"]] = a
     reference = sorted(k for k, v in verdict.items() if v == 1)
     ref = set(reference)
@@ -318,6 +364,7 @@ def score_sheet(path) -> AnnotationScore:
         n_disagreements=disagreements,
         reference=reference,
         per_system=per_system,
+        mode="intra-rater" if single else "inter-rater",
     )
 
 
