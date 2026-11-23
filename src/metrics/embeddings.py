@@ -12,6 +12,9 @@ and every dimension keeps its plain meaning.
 
 On these vectors the module provides:
 
+A shape-only variant (``shape_only=True``) drops the level and the support
+series so that rules group by trajectory shape alone.
+
 * :func:`cluster_rules`: k-means (Spark MLlib) grouping of rules with similar
   lifecycles; :func:`adjusted_rand_index` scores agreement between clusters and
   the Table 3.2 lifecycle classes (a data-driven check on §3.5.6).
@@ -33,14 +36,29 @@ from pyspark.sql import functions as F
 EMBEDDING_COL = "embedding"
 
 
-def trajectory_embeddings(metrics: DataFrame) -> DataFrame:
-    """Add an ``embedding`` (array<double>) column built from the series."""
+def trajectory_embeddings(metrics: DataFrame, shape_only: bool = False) -> DataFrame:
+    """Add an ``embedding`` (array<double>) column built from the series.
+
+    With ``shape_only`` the vector is ``[conf_wi - mean(conf) | d_1 .. d_{n-1}]``:
+    the confidence trajectory centred on its own mean, plus its first
+    differences, without the support series. Rules then group by the *shape*
+    of their trajectory (flat, rising, falling, spike) regardless of how
+    strong they are, which is what the lifecycle classes describe. The default
+    vector also carries the level, so k-means on it tends to split rules by
+    confidence level first.
+    """
     diffs = F.expr(
         "CASE WHEN size(confidence_series) > 1 THEN "
         "transform(sequence(1, size(confidence_series) - 1), "
         "i -> element_at(confidence_series, i + 1) - element_at(confidence_series, i)) "
         "ELSE array() END"
     ).cast("array<double>")
+    if shape_only:
+        centred = F.expr(
+            "transform(confidence_series, c -> c - aggregate(confidence_series, 0D, (a, x) -> a + x)"
+            " / size(confidence_series))"
+        ).cast("array<double>")
+        return metrics.withColumn(EMBEDDING_COL, F.concat(centred, diffs))
     return metrics.withColumn(
         EMBEDDING_COL,
         F.concat(
