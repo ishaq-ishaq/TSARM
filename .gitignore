@@ -37,3 +37,6 @@ claude.MD
 # Unpublished thesis material: kept local, never pushed to the public repo
 Proposal_*.docx
 docs/proposal_amendments.md
+
+# Third-party baseline binaries (downloaded, not versioned)
+tools/

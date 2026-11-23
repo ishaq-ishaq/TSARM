@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""Run the TSARM vs SANSA vs RDFRules comparison on the sample dataset.
+"""Run the TSARM vs SANSA vs RDFRules vs AMIE+ comparison on the sample dataset.
 
-TSARM runs in-process. SANSA and RDFRules run only if their command templates
-are configured via ``$SANSA_CMD`` / ``$RDFRULES_CMD`` (see
+TSARM runs in-process. SANSA, RDFRules and AMIE+ run only if their command templates
+are configured via ``$SANSA_CMD`` / ``$RDFRULES_CMD`` / ``$AMIE_CMD`` (see
 ``src/evaluation/adapters.py``); otherwise they are reported as skipped.
 
 Usage (from the project root)::
@@ -21,9 +21,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.evaluation.adapters import (  # noqa: E402
+    BenchmarkResult,
     Dataset,
     Snapshot,
     TSARMBaseline,
+    amie_baseline,
     rdfrules_baseline,
     sansa_baseline,
 )
@@ -61,6 +63,20 @@ def main() -> None:
     )
     ap.add_argument("--min-support", type=float)
     ap.add_argument("--min-confidence", type=float)
+    ap.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help="measured repetitions per system (proposal: 3). With >1, one extra "
+        "warm-up round is discarded and TSARM is compared with each baseline "
+        "using the Table 3.4 tests",
+    )
+    ap.add_argument(
+        "--timeout",
+        type=int,
+        default=3600,
+        help="wall-clock limit per external-baseline run, in seconds (default 3600)",
+    )
     args = ap.parse_args()
 
     mode = "synthetic" if args.synthetic else "sample"
@@ -84,10 +100,16 @@ def main() -> None:
 
         baselines = [
             TSARMBaseline(spark, min_support=min_support, min_confidence=min_confidence),
-            sansa_baseline(min_support=min_support, min_confidence=min_confidence),
-            rdfrules_baseline(min_support=min_support, min_confidence=min_confidence),
+            sansa_baseline(min_support=min_support, min_confidence=min_confidence, timeout_sec=args.timeout),
+            rdfrules_baseline(min_support=min_support, min_confidence=min_confidence, timeout_sec=args.timeout),
+            amie_baseline(min_support=min_support, min_confidence=min_confidence, timeout_sec=args.timeout),
         ]
-        results = run_benchmark(baselines, [dataset])
+        timed_out = set()
+        if args.repeats > 1:
+            print("Warm-up round (discarded) ...", flush=True)
+            _round(baselines, dataset, timed_out)
+        rounds = [_round(baselines, dataset, timed_out) for _ in range(max(1, args.repeats))]
+        results = rounds[-1]
 
         print("\n## Benchmark comparison\n")
         print(to_markdown(results))
@@ -100,10 +122,77 @@ def main() -> None:
         csv_path = RESULTS / f"benchmark_{mode}.csv"
         to_csv(results, csv_path)
         print(f"\nWrote {csv_path}")
+
+        if args.repeats > 1:
+            _write_repeats(rounds, mode)
     finally:
         spark.stop()
         if tmp_ctx is not None:
             tmp_ctx.cleanup()
+
+
+def _round(baselines, dataset, timed_out: set):
+    """One benchmark round. A system that has timed out once is not re-run:
+    it is reported as ``timeout`` again, which saves hours on large inputs."""
+    active = [b for b in baselines if b.name not in timed_out]
+    results = run_benchmark(active, [dataset])
+    for name in sorted(timed_out):
+        results.append(
+            BenchmarkResult(
+                system=name,
+                dataset=dataset.name,
+                status="timeout",
+                supports_temporal=False,
+                note="not re-run: timed out in an earlier round",
+            )
+        )
+    timed_out.update(r.system for r in results if r.status == "timeout")
+    return results
+
+
+def _write_repeats(rounds, mode: str) -> None:
+    """Per-run CSV plus paired TSARM-vs-baseline runtime tests (Table 3.4)."""
+    import csv
+
+    from src.evaluation.stats import compare_paired
+
+    runs_path = RESULTS / f"benchmark_{mode}_runs.csv"
+    with open(runs_path, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["repeat", "system", "status", "runtime_sec", "n_rules", "mean_confidence"])
+        for i, rnd in enumerate(rounds, 1):
+            for r in rnd:
+                w.writerow([i, r.system, r.status, r.runtime_sec, r.n_rules, r.mean_confidence])
+    print(f"Wrote {runs_path}")
+
+    def runtimes(system):
+        vals = [
+            next((r.runtime_sec for r in rnd if r.system == system and r.status == "ok"), None)
+            for rnd in rounds
+        ]
+        return vals if all(v is not None for v in vals) else None
+
+    tsarm = runtimes("TSARM")
+    systems = sorted({r.system for rnd in rounds for r in rnd} - {"TSARM"})
+    rows = []
+    for system in systems:
+        base = runtimes(system)
+        if tsarm is None or base is None:
+            continue
+        c = compare_paired(tsarm, base, metric=f"runtime_sec: TSARM vs {system}")
+        rows.append(c.as_dict())
+        print(
+            f"\n{c.metric}: {c.mean_tsarm:.1f}s vs {c.mean_baseline:.1f}s | {c.test} "
+            f"p={c.p_value if c.p_value is None else round(c.p_value, 4)} | "
+            f"{c.effect_size_name}={c.effect_size:.2f}" + (f" | {c.note}" if c.note else "")
+        )
+    if rows:
+        stats_path = RESULTS / f"benchmark_{mode}_stats.csv"
+        with open(stats_path, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows(rows)
+        print(f"Wrote {stats_path}")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ Adapters
   that is invoked as a shell command and writes a rules file. The command is
   supplied via an environment variable, so no third-party JAR is bundled; if the
   variable is unset the baseline reports itself unavailable and is skipped.
-* :func:`sansa_baseline` / :func:`rdfrules_baseline` -- pre-configured
+* :func:`sansa_baseline` / :func:`rdfrules_baseline` / :func:`amie_baseline` -- pre-configured
   :class:`ExternalCommandBaseline` instances for the two systems named in the
   research proposal (Lehmann et al., 2017; Zeman, Kliegr and Svetek, 2021).
 
@@ -177,8 +177,10 @@ class TSARMBaseline(Baseline):
         width: int = 1,
         step: int = 1,
         include_literals: bool = False,
+        item_mode: str = "fact",
     ):
         super().__init__(min_support, min_confidence)
+        self.item_mode = item_mode
         self.spark = spark
         self.tau = tau
         self.width = width
@@ -218,6 +220,7 @@ class TSARMBaseline(Baseline):
             min_support=self.min_support,
             min_confidence=self.min_confidence,
             include_literals=self.include_literals,
+            item_mode=self.item_mode,
         )
         metrics = compute_metrics(candidates, n_windows=n_windows, tau=self.tau)
 
@@ -246,6 +249,48 @@ class TSARMBaseline(Baseline):
                 "mean_abs_drift": quality["drift"] or 0.0,
             },
         )
+
+
+def _run_with_wall_timeout(command: str, timeout_sec: float):
+    """Run a shell command; kill its whole process group after ``timeout_sec``.
+
+    Two problems with ``subprocess.run(timeout=...)`` for long JVM baselines:
+
+    * on timeout it kills only the shell, so the tool's JVM keeps running as
+      an orphan;
+    * its deadline uses a monotonic clock that stops while the machine sleeps,
+      so an overnight run on a laptop can exceed its limit by hours.
+
+    Here the command runs in its own session (process group), the deadline is
+    measured on the wall clock, and output goes to temporary files so a chatty
+    tool cannot block on a full pipe.
+
+    Returns a ``CompletedProcess``, or ``None`` if the command was killed.
+    """
+    import signal
+
+    with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
+        proc = subprocess.Popen(
+            command, shell=True, stdout=out, stderr=err, text=True, start_new_session=True
+        )
+        deadline = time.time() + timeout_sec
+        while proc.poll() is None:
+            if time.time() > deadline:
+                for sig in (signal.SIGTERM, signal.SIGKILL):
+                    try:
+                        os.killpg(proc.pid, sig)
+                    except ProcessLookupError:
+                        break
+                    try:
+                        proc.wait(timeout=10)
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+                return None
+            time.sleep(0.2)
+        out.seek(0)
+        err.seek(0)
+        return subprocess.CompletedProcess(command, proc.returncode, out.read(), err.read())
 
 
 class ExternalCommandBaseline(Baseline):
@@ -296,23 +341,17 @@ class ExternalCommandBaseline(Baseline):
                 min_confidence=self.min_confidence,
             )
             start = time.perf_counter()
-            try:
-                proc = subprocess.run(
-                    command,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout_sec,
-                )
-            except subprocess.TimeoutExpired:
+            proc = _run_with_wall_timeout(command, self.timeout_sec)
+            runtime = time.perf_counter() - start
+            if proc is None:
                 return BenchmarkResult(
                     system=self.name,
                     dataset=dataset.name,
-                    status="error",
+                    status="timeout",
                     supports_temporal=self.supports_temporal,
-                    note=f"Timed out after {self.timeout_sec}s.",
+                    runtime_sec=float(self.timeout_sec),
+                    note=f"Did not finish within {self.timeout_sec}s (killed).",
                 )
-            runtime = time.perf_counter() - start
 
             if proc.returncode != 0:
                 return BenchmarkResult(
@@ -366,3 +405,19 @@ def rdfrules_baseline(**kwargs) -> ExternalCommandBaseline:
     Verified with RDFRules 1.9.0 under Java 17.
     """
     return ExternalCommandBaseline(name="RDFRules", command_env="RDFRULES_CMD", **kwargs)
+
+
+def amie_baseline(**kwargs) -> ExternalCommandBaseline:
+    """AMIE adapter (AMIE+ lineage: Galarraga et al., 2015; AMIE 3.5.1). Configure via ``$AMIE_CMD``.
+
+    ``scripts/amie_mine.py`` pools all snapshots into one static graph (§3.7.2),
+    runs the AMIE jar and writes ``rules.csv`` (support = head coverage,
+    confidence = standard confidence). Download the jar from
+    https://github.com/dig-team/AMIE/releases, then::
+
+        export AMIE_JAR=$PWD/tools/amie/amie3.5.1.jar
+        export AMIE_CMD='python3 scripts/amie_mine.py --input {input} \\
+            --output {output} --min-support {min_support} \\
+            --min-confidence {min_confidence}'
+    """
+    return ExternalCommandBaseline(name="AMIE+", command_env="AMIE_CMD", **kwargs)

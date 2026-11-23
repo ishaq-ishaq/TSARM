@@ -25,6 +25,18 @@ Usage (from the project root)::
     export JAVA_HOME="/opt/homebrew/opt/openjdk@17"
     python3 scripts/core_scaling.py --mode strong --entities 200000
     python3 scripts/core_scaling.py --mode weak --entities 20000
+
+**Cluster mode (experiment E2)**: with ``--master-url spark://HOST:7077``, the
+same experiment runs on a Spark standalone cluster. ``p`` then caps the
+executor cores (``spark.cores.max``); with 1-core workers it equals the number
+of worker nodes. There is no shared filesystem, so every node needs the input
+files at the same path. Generate them first, on every node (the generator is
+deterministic for a given seed, so the copies are identical)::
+
+    python3 scripts/core_scaling.py --generate-only --data-dir ~/tsarm-data \
+        --mode strong --cores 1,2,3,4 --entities 300000
+    python3 scripts/core_scaling.py --master-url spark://10.0.0.10:7077 \
+        --data-dir ~/tsarm-data --mode strong --cores 1,2,3,4 --entities 300000
 """
 
 from __future__ import annotations
@@ -62,21 +74,47 @@ def _parse_cores(text: str):
     return sorted({int(x) for x in text.split(",") if x.strip()})
 
 
-def _run_once(p: int, dataset) -> dict:
-    """One full pipeline run on ``local[p]``; returns runtime and sizes."""
+def _run_once(p: int, dataset, master_url=None, executor_memory="3g") -> dict:
+    """One full pipeline run with ``p`` cores; returns runtime and sizes.
+
+    Local mode uses ``local[p]``. Cluster mode connects to ``master_url`` and
+    caps the application at ``p`` single-core executors.
+    """
+    config = {"spark.sql.shuffle.partitions": str(SHUFFLE_PARTITIONS)}
+    if master_url:
+        config.update(
+            {
+                "spark.cores.max": str(p),
+                "spark.executor.cores": "1",
+                "spark.executor.memory": executor_memory,
+            }
+        )
     spark = get_spark(
         app_name=f"TSARM-core-scaling-p{p}",
-        master=f"local[{p}]",
-        config={"spark.sql.shuffle.partitions": str(SHUFFLE_PARTITIONS)},
+        master=master_url or f"local[{p}]",
+        config=config,
     )
     try:
         result = TSARMBaseline(
             spark, min_support=MIN_SUPPORT, min_confidence=MIN_CONFIDENCE
         ).run(dataset)
+        if master_url:
+            # Executors actually granted (memory or core limits on the workers
+            # can silently give fewer than requested). Excludes the driver.
+            granted = spark.sparkContext._jsc.sc().getExecutorMemoryStatus().size() - 1
+        else:
+            granted = p
     finally:
         # A fresh SparkContext per run, so local[p] actually changes.
         spark.stop()
+    if master_url and granted != p:
+        print(
+            f"  WARNING: requested p={p} executor cores but {granted} executor(s) were granted; "
+            "check worker cores/memory vs --executor-memory",
+            flush=True,
+        )
     return {
+        "executors_granted": granted,
         "runtime_sec": result.runtime_sec,
         "n_input_triples": result.n_input_triples,
         "n_rules": result.n_rules,
@@ -95,7 +133,14 @@ def main() -> None:
     )
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--master-url", default=None, help="spark://HOST:7077 for cluster mode (E2)")
+    ap.add_argument("--executor-memory", default="3g", help="cluster mode only")
+    ap.add_argument("--data-dir", default=None, help="persistent dataset dir (required for clusters)")
+    ap.add_argument("--generate-only", action="store_true", help="write datasets to --data-dir and exit")
+    ap.add_argument("--tag", default="", help="suffix for output file names (e.g. a re-run)")
     args = ap.parse_args()
+    if (args.master_url or args.generate_only) and not args.data_dir:
+        ap.error("--master-url and --generate-only need --data-dir (same path on every node)")
 
     cores = _parse_cores(args.cores)
     hw = hardware_fingerprint()
@@ -103,7 +148,7 @@ def main() -> None:
     runs = []
 
     with tempfile.TemporaryDirectory(prefix="tsarm_core_scaling_") as tmp:
-        tmp_dir = Path(tmp)
+        tmp_dir = Path(args.data_dir).expanduser().resolve() if args.data_dir else Path(tmp)
         datasets = {}
         for p in cores:
             n = args.entities * (p if args.mode == "weak" else 1)
@@ -116,16 +161,18 @@ def main() -> None:
                     seed=args.seed,
                 )
                 datasets[n] = (ds, total)
-                print(f"generated {total:,} triples ({n:,} entities/snapshot)")
+                print(f"generated {total:,} triples ({n:,} entities/snapshot) in {tmp_dir}")
+        if args.generate_only:
+            return
 
         for p in cores:
             n = args.entities * (p if args.mode == "weak" else 1)
             dataset, _ = datasets[n]
             print(f"\np={p}: warm-up ...", flush=True)
-            _run_once(p, dataset)
+            _run_once(p, dataset, args.master_url, args.executor_memory)
             for rep in range(1, args.repeats + 1):
                 t0 = time.perf_counter()
-                m = _run_once(p, dataset)
+                m = _run_once(p, dataset, args.master_url, args.executor_memory)
                 wall = time.perf_counter() - t0
                 row = {
                     "mode": args.mode,
@@ -139,6 +186,7 @@ def main() -> None:
                         m["n_input_triples"], m["runtime_sec"]
                     ),
                     "n_rules": m["n_rules"],
+                    "executors_granted": m["executors_granted"],
                 }
                 runs.append(row)
                 print(
@@ -157,7 +205,10 @@ def main() -> None:
         )
 
     RESULTS.mkdir(exist_ok=True)
-    stem = RESULTS / f"core_scaling_{args.mode}"
+    stem = RESULTS / (
+        (f"cluster_scaling_{args.mode}" if args.master_url else f"core_scaling_{args.mode}")
+        + (f"_{args.tag}" if args.tag else "")
+    )
     with open(f"{stem}_runs.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(runs[0]))
         w.writeheader()
@@ -169,7 +220,9 @@ def main() -> None:
     with open(f"{stem}.json", "w") as fh:
         json.dump(
             {
-                "experiment": f"E1 core scaling ({args.mode})",
+                "experiment": (
+                    f"E2 cluster scaling ({args.mode})" if args.master_url else f"E1 core scaling ({args.mode})"
+                ),
                 "started_utc": started,
                 "hardware": hw,
                 "params": {
