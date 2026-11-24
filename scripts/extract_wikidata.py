@@ -38,9 +38,11 @@ from src.ingestion.wikidata import (  # noqa: E402
     DEFAULT_PROPERTIES,
     header,
     iter_entities,
+    iter_xml_raw,
     open_dump,
     parse_entity_text,
     write_rows,
+    xml_text,
 )
 
 BATCH = 500
@@ -54,11 +56,22 @@ def _batches(it, size):
         yield batch
 
 
-def _parse_batch(texts, properties):
+def _parse_batch(texts, properties, raw_xml=False):
+    """Rows of a batch of entity texts, and how many entities it held.
+
+    With ``raw_xml`` the texts are still XML-escaped page contents
+    (:func:`iter_xml_raw`): decoding them here, in the worker, keeps the
+    single reading process from limiting the extraction."""
     rows = []
+    n = 0
     for t in texts:
+        if raw_xml:
+            t = xml_text(t)
+            if t is None:  # an item page whose text is not entity JSON
+                continue
+        n += 1
         rows.extend(parse_entity_text(t, properties))
-    return len(texts), rows
+    return n, rows
 
 
 def _infer_format(path: str) -> str:
@@ -82,14 +95,15 @@ def main() -> None:
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    texts = iter_entities(open_dump(args.input), fmt)
+    stream = open_dump(args.input)
+    texts = iter_xml_raw(stream) if fmt == "xml" else iter_entities(stream, fmt)
     if args.limit:
         texts = islice(texts, args.limit)
 
     t0 = time.perf_counter()
     n_entities = n_rows = 0
     next_report = 1_000_000
-    work = partial(_parse_batch, properties=props)
+    work = partial(_parse_batch, properties=props, raw_xml=fmt == "xml")
     with gzip.open(out_path, "wt", encoding="utf-8") as out, Pool(args.workers) as pool:
         out.write(header())
         for n_texts, rows in pool.imap(work, _batches(texts, BATCH), chunksize=4):
