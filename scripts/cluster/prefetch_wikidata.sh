@@ -19,15 +19,21 @@ for job in "2019-01 2020-09 wikidatawiki-20200920" "2020-09 2021-01 wikidatawiki
     log "$snap: waiting for disk space"; sleep 600
   done
   log "$snap: prefetch start ($size bytes)"
+  # One long-lived connection: archive.org starts range requests slowly, so the
+  # transfer is only restarted (with -C -) when it stalls or drops.
   while [ "$(fsize "$tmp")" != "$size" ]; do
-    if [ -s "$OUT/$prev.tsv.gz" ] || [ -e "$real" ]; then  # the main loop has caught up
-      if [ ! -e "$real" ]; then mv "$tmp" "$real"; log "$snap: handed $(fsize "$real") bytes to the main loop";
-      else log "$snap: main loop started first; dropped $(fsize "$tmp") bytes"; rm -f "$tmp"; fi
-      continue 2
-    fi
-    # No --retry: on a retry curl truncates the file back to where the attempt began,
-    # so --max-time chunks would be fetched up to six times. This loop resumes instead.
-    curl -sL -C - --max-time 600 -o "$tmp" "$url" || sleep 15
+    curl -sL -C - --speed-limit 100000 --speed-time 300 -o "$tmp" "$url" &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ -s "$OUT/$prev.tsv.gz" ] || [ -e "$real" ]; then  # the main loop has caught up
+        kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+        if [ ! -e "$real" ] && [ -f "$tmp" ]; then mv "$tmp" "$real"; log "$snap: handed $(fsize "$real") bytes to the main loop";
+        else log "$snap: main loop started first; dropped $(fsize "$tmp") bytes"; rm -f "$tmp"; fi
+        continue 3
+      fi
+      sleep 5
+    done
+    wait "$pid" 2>/dev/null || sleep 15
   done
   if [ ! -e "$real" ]; then mv "$tmp" "$real"; log "$snap: complete and in place";
   else rm -f "$tmp"; log "$snap: main loop got there first; dropped"; fi
