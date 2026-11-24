@@ -22,10 +22,12 @@ for job in "2019-01 2020-09 wikidatawiki-20200920" "2020-09 2021-01 wikidatawiki
   while [ "$(fsize "$tmp")" != "$size" ]; do
     if [ -s "$OUT/$prev.tsv.gz" ] || [ -e "$real" ]; then  # the main loop has caught up
       if [ ! -e "$real" ]; then mv "$tmp" "$real"; log "$snap: handed $(fsize "$real") bytes to the main loop";
-      else rm -f "$tmp"; log "$snap: main loop started first; partial dropped"; fi
+      else log "$snap: main loop started first; dropped $(fsize "$tmp") bytes"; rm -f "$tmp"; fi
       continue 2
     fi
-    curl -sL -C - --max-time 300 --retry 5 --retry-delay 15 -o "$tmp" "$url"
+    # No --retry: on a retry curl truncates the file back to where the attempt began,
+    # so --max-time chunks would be fetched up to six times. This loop resumes instead.
+    curl -sL -C - --max-time 600 -o "$tmp" "$url" || sleep 15
   done
   if [ ! -e "$real" ]; then mv "$tmp" "$real"; log "$snap: complete and in place";
   else rm -f "$tmp"; log "$snap: main loop got there first; dropped"; fi
