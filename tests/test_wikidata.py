@@ -207,6 +207,33 @@ def test_read_statements_into_spark(tmp_path):
         spark.stop()
 
 
+def test_read_statements_tolerates_impossible_dates(tmp_path):
+    # Real Wikidata dumps contain impossible calendar dates (2022-01 has
+    # 1973-04-31); they must become null, not fail the whole job.
+    from src.ingestion.spark_session import get_spark
+    from src.ingestion.wikidata import header, read_statements, write_rows
+
+    W = "http://www.wikidata.org/entity/"
+    P31 = "http://www.wikidata.org/prop/direct/P31"
+    rows = [
+        (W + "Q1", P31, W + "Q5", "normal", True, "1973-04-31", 11, "2001-02-29", 11, None, None),
+        (W + "Q2", P31, W + "Q5", "normal", True, "2000-02-29", 11, None, None, "1999-13-01", 11),
+    ]
+    path = tmp_path / "s.tsv.gz"
+    with gzip.open(path, "wt") as fh:
+        fh.write(header())
+        write_rows(rows, fh)
+    spark = get_spark(app_name="TSARM-wikidata-tests", master="local[2]")
+    try:
+        got = {r.subject.rsplit("/", 1)[-1]: r
+               for r in read_statements(spark, path, "2022-01", datetime(2022, 1, 20)).collect()}
+        assert got["Q1"].valid_from is None and got["Q1"].valid_to is None
+        assert got["Q1"].start_time == "1973-04-31"  # raw string kept
+        assert got["Q2"].valid_from == date(2000, 2, 29)  # a real leap day still parses
+    finally:
+        spark.stop()
+
+
 # --- Snapshot loading and the end-to-end Wikidata driver --------------------
 
 
