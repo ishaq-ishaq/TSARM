@@ -17,6 +17,7 @@ from src.ingestion.wikidata import (
     extract_entity,
     iter_json_dump,
     iter_xml_dump,
+    iter_xml_dump_etree,
     normalize_time,
     parse_entity_text,
 )
@@ -145,6 +146,46 @@ def _xml_dump(entities):
         '<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.10/" version="0.10">'
         "<siteinfo><sitename>Wikidata</sitename></siteinfo>" + "".join(pages) + "</mediawiki>"
     )
+
+
+def _awkward_xml_dump():
+    """A pages dump laid out like the real one, plus the edge cases."""
+    tricky = dict(ENTITY_A, labels={"en": {"language": "en", "value": 'A & B <c> "d" \'e\' &amp; &#38; \u00e9\u4e2d'}})
+    pages = [
+        ("0", escape(json.dumps(ENTITY_A))),
+        ("0", escape(json.dumps(tricky), {'"': "&quot;", "'": "&apos;"})),
+        ("0", escape(json.dumps(ENTITY_B)).replace("Q", "&#81;", 1)),  # numeric character reference
+        ("0", '{"entity":"Q9","redirect":"Q1"}'.replace('"', "&quot;")),  # redirect page
+        ("120", escape(json.dumps(PROPERTY_ENTITY))),
+        ("0", None),  # deleted text: <text ... />
+        ("0", escape("#REDIRECT [[x]]\r\nwikitext\nover lines")),  # not JSON
+        ("1", escape("talk page\nwith\r\nlines & things <b>")),
+    ]
+    out = ['<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.10/" version="0.10">',
+           "  <siteinfo>", "    <sitename>Wikidata</sitename>", "  </siteinfo>"]
+    for i, (ns, text) in enumerate(pages):
+        out += ["  <page>", f"    <title>T{i}</title>", f"    <ns>{ns}</ns>", f"    <id>{i}</id>",
+                "    <revision>", f"      <id>{i}</id>", "      <model>wikibase-item</model>"]
+        if text is None:
+            out.append('      <text bytes="0" deleted="deleted" />')
+        else:
+            out.append(f'      <text bytes="{len(text)}" xml:space="preserve">{text}</text>')
+        out += ["      <sha1>x</sha1>", "    </revision>", "  </page>"]
+    out.append("</mediawiki>")
+    return "\n".join(out) + "\n"
+
+
+@pytest.mark.parametrize("read_size", [7, 64, 1 << 23])
+def test_fast_xml_reader_matches_xml_parser(monkeypatch, read_size):
+    import src.ingestion.wikidata as wd
+
+    monkeypatch.setattr(wd, "_READ_SIZE", read_size)  # small reads: pages split across chunks
+    for doc in (_awkward_xml_dump(), _xml_dump([ENTITY_A, PROPERTY_ENTITY, ENTITY_B])):
+        fast = list(iter_xml_dump(io.BytesIO(doc.encode())))
+        reference = list(iter_xml_dump_etree(io.BytesIO(doc.encode())))
+        assert fast == reference and fast
+    texts = list(iter_xml_dump(io.BytesIO(_awkward_xml_dump().encode())))
+    assert len(texts) == 4 and '"A & B <c> \\"d\\"' in texts[1] and "&amp; &#38;" in texts[1]
 
 
 def test_json_and_xml_readers_agree():

@@ -183,8 +183,108 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+_XML_REF = re.compile(r"&(#x[0-9a-fA-F]+|#[0-9]+|quot|lt|gt|amp|apos);")
+_NAMED = {"quot": '"', "lt": "<", "gt": ">", "amp": "&", "apos": "'"}
+_READ_SIZE = 1 << 23
+
+
+def _xml_ref(m: "re.Match[str]") -> str:
+    ref = m.group(1)
+    if ref[0] != "#":
+        return _NAMED[ref]
+    return chr(int(ref[2:], 16) if ref[1] == "x" else int(ref[1:]))
+
+
+def _xml_text(raw: bytes) -> str:
+    """Decode XML character data: entities, character references, line ends."""
+    if b"\r" in raw:  # XML end-of-line handling, as an XML parser applies it
+        raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    text = raw.decode("utf-8")
+    if "&" not in text:
+        return text
+    if "&#" in text:  # rare: one exact single pass
+        return _XML_REF.sub(_xml_ref, text)
+    # Fast path; "&amp;" last, so an escaped "&amp;lt;" correctly stays "&lt;".
+    text = text.replace("&quot;", '"').replace("&lt;", "<").replace("&gt;", ">").replace("&apos;", "'")
+    return text.replace("&amp;", "&")
+
+
+def xml_text(raw: bytes) -> Optional[str]:
+    """Entity text from a page's raw ``<text>`` content, or None if not JSON.
+
+    Decodes the XML escaping (see :func:`iter_xml_raw`)."""
+    text = _xml_text(raw)
+    return text if text.lstrip().startswith("{") else None
+
+
+def _page_text(page: bytes) -> Optional[bytes]:
+    """Raw (still XML-escaped) text of one <page> block if it is an item page."""
+    i = page.find(b"<ns>")
+    if i < 0:
+        return None
+    j = page.find(b"</ns>", i)
+    if page[i + 4 : j].strip() != b"0":
+        return None
+    t = page.rfind(b"<text")  # the last revision's text, as an XML parser would give
+    if t < 0:
+        return None
+    gt = page.find(b">", t)
+    if gt < 0 or page[gt - 1 : gt] == b"/":  # <text ... /> : no content
+        return None
+    end = page.find(b"</text>", gt)
+    return None if end < 0 else page[gt + 1 : end]
+
+
+def iter_xml_raw(stream: IO[bytes]) -> Iterator[bytes]:
+    """Raw ``<text>`` content of the item pages (namespace 0) of a pages XML dump.
+
+    Scans the byte stream for ``<page>`` blocks instead of building an XML tree.
+    This is exact for MediaWiki dumps because element content is escaped: a
+    literal ``<`` occurs only in markup, so tags can be located by byte search.
+    The content is returned still escaped; :func:`xml_text` decodes it, so the
+    extractor can do that in its worker processes and keep the single reading
+    thread fast (about 3 times the speed of :func:`iter_xml_dump_etree`).
+    """
+    buf = b""
+    while True:
+        chunk = stream.read(_READ_SIZE)
+        if chunk:
+            buf += chunk
+        pos = 0
+        while True:
+            start = buf.find(b"<page>", pos)
+            if start < 0:
+                break
+            end = buf.find(b"</page>", start)
+            if end < 0:
+                break
+            raw = _page_text(buf[start:end])
+            if raw is not None:
+                yield raw
+            pos = end + 7
+        buf = buf[pos:]
+        if not chunk:
+            return
+
+
 def iter_xml_dump(stream: IO[bytes]) -> Iterator[str]:
-    """Entity texts from a MediaWiki pages XML dump (item pages, namespace 0)."""
+    """Entity texts from a MediaWiki pages XML dump (item pages, namespace 0).
+
+    Same output as :func:`iter_xml_dump_etree` (checked in
+    ``tests/test_wikidata.py``), via the byte scanner :func:`iter_xml_raw`.
+    """
+    for raw in iter_xml_raw(stream):
+        text = xml_text(raw)
+        if text is not None:
+            yield text
+
+
+def iter_xml_dump_etree(stream: IO[bytes]) -> Iterator[str]:
+    """Reference reader for :func:`iter_xml_dump` using a full XML parser.
+
+    Same output, about 4-5 times slower: the single parsing thread limits the
+    whole extraction. Kept to check the fast reader against.
+    """
     context = ET.iterparse(stream, events=("start", "end"))
     root = None
     for event, elem in context:
