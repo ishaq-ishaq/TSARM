@@ -1,28 +1,38 @@
 # Experiment records
 
 Where the evidence for every reported result is kept. Result data live under
-`results/` (git-ignored); this index is the map. Every result JSON also embeds
+`results/` (git-ignored), one folder per experiment or dataset; this index is the
+map. `results/REORGANISATION_LOG.txt` lists where each file was before the
+folders were introduced (27 Nov 2026). Scripts still write new output to
+`results/` itself. Every result JSON also embeds
 its parameters, stage timings and a hardware fingerprint (CPU, memory, Python,
 Java, Spark versions).
 
 ## E1: core scalability (development machine)
 
-`results/core_scaling_*` (per-run CSV, summary CSV, JSON with hardware), logs next to them.
+`results/E1_core_scaling/`: per-run CSV, summary CSV and JSON (with hardware) of each sweep, logs next to them.
 
 ## E2: multi-node scalability (8 cloud instances, eu-north-1)
 
-`results/tsarm-aws-results.tgz` (as fetched from the master node) and the
-unpacked `results/cluster_scaling_{strong,weak}_aws{.json,_runs.csv,_summary.csv}`;
-node log `results/cluster_scaling_aws_e2-node.log`. Every run records the number
+`results/E2_cluster_scaling/`: `tsarm-aws-results.tgz` (as fetched from the
+master node) and the unpacked `cluster_scaling_{strong,weak}_aws{.json,_runs.csv,_summary.csv}`;
+node log `cluster_scaling_aws_e2-node.log`; the local standalone-cluster checks in
+`local_cluster_checks/`. Every run records the number
 of executors granted (0 mismatches in 30 runs). Gap: no instance-metadata
 document was saved from the cloud provider; the node log and the hardware
 fingerprint identify the instances.
 
 ## E3–E5 on synthetic data, DBpedia
 
-`results/benchmark_*`, `results/quality_*`, `results/dbpedia_*`,
-`results/dbpedia_sample5/` (three repeats, `timings.txt`),
-`results/dbpedia_amie/OUTCOME.txt` (AMIE on the full releases: heap exhausted).
+Synthetic data and the bundled samples: `results/synthetic_and_samples/`
+(`benchmark_*`, `quality_*`, `scale_test.csv`, `sample_temporal_rules.*`).
+DBpedia: `results/dbpedia/` (`dbpedia_*` rules and logs, trajectory clusters
+`clusters_dbpedia_*`, `dbpedia_sample5/` with three repeats and `timings.txt`,
+`dbpedia_amie/OUTCOME.txt`: AMIE on the full releases, heap exhausted).
+
+## Wikidata pilot on generated data
+
+`results/wikidata_rehearsal/` (`wikidata_rehearsal.*`, trajectory clusters `clusters_rehearsal_*`).
 
 ## Wikidata (virtual machine, 4 vCPU / 28 GB, South Africa North)
 
@@ -63,6 +73,12 @@ Recorded limitations, stated rather than omitted:
   logs are kept as `*.run1-failed.log`.
 
 The VM was deallocated after the records were fetched; its disk is kept.
+
+## Wikidata analysis (development machine)
+
+`results/wikidata_analysis/`: trajectory clustering of the full-data rules
+(`clusters_wikidata_full{,_shape}.{json,log}`) and the labels of the example
+rules (`wikidata_full_example_labels.json`).
 
 ## Wikidata baseline comparison (development machine)
 
