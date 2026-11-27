@@ -278,7 +278,7 @@ def write_retest_sheet(sheet, path, fraction: float = 0.25, seed: int = 7) -> Pa
     random order, without the first labels, the systems, the lifecycle class or
     the confidences, so that the second pass is independent of the first.
     """
-    with open(sheet, newline="", encoding="utf-8") as fh:
+    with open(sheet, newline="", encoding="utf-8-sig") as fh:
         rows = [r for r in csv.DictReader(fh) if _judgement(r["judge_a"]) is not None]
     if not rows:
         raise ValueError(f"{sheet}: no rule has a decided judge_a label yet")
@@ -317,14 +317,14 @@ def score_sheet(path, retest=None) -> AnnotationScore:
     rule's ``judge_a`` with its ``retest`` label (intra-rater reliability), and
     a rule's verdict is ``final`` if given, else ``judge_a``.
     """
-    with open(path, newline="", encoding="utf-8") as fh:
+    with open(path, newline="", encoding="utf-8-sig") as fh:
         rows = list(csv.DictReader(fh))
     single = all(_judgement(r.get("judge_b", "")) is None for r in rows)
     pairs, verdict, disagreements = [], {}, 0
     if single:
         first = {r["rule"]: _judgement(r["judge_a"]) for r in rows}
         if retest is not None:
-            with open(retest, newline="", encoding="utf-8") as fh:
+            with open(retest, newline="", encoding="utf-8-sig") as fh:
                 for r in csv.DictReader(fh):
                     a, b = first.get(r["rule"]), _judgement(r["retest"])
                     if a is not None and b is not None:
