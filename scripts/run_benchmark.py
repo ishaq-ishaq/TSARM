@@ -52,6 +52,21 @@ def sample_dataset() -> Dataset:
     )
 
 
+def snapshots_dataset(directory: Path, name: str) -> Dataset:
+    """One N-Triples file per snapshot, the snapshot date (YYYY-MM) in the file name."""
+    import re
+
+    pat = re.compile(r"(?<!\d)(\d{4})-(\d{2})(?!\d)")
+    snaps = []
+    for f in sorted(directory.iterdir()):
+        m = pat.search(f.name)
+        if m and (f.name.endswith(".nt") or f.name.endswith(".nt.gz")):
+            snaps.append(Snapshot(f"{m.group(1)}-{m.group(2)}", f, datetime(int(m.group(1)), int(m.group(2)), 1)))
+    if len(snaps) < 2:
+        sys.exit(f"Need at least two snapshot files (…YYYY-MM….nt) in {directory}")
+    return Dataset(name=name, snapshots=sorted(snaps, key=lambda s: s.timestamp))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -61,6 +76,13 @@ def main() -> None:
         help="benchmark a generated synthetic dataset of this many entities "
         "instead of the tiny committed sample",
     )
+    ap.add_argument(
+        "--snapshots-dir",
+        type=Path,
+        help="benchmark the per-snapshot N-Triples files in this directory "
+        "(e.g. a Wikidata sample export); requires --name, --min-support, --min-confidence",
+    )
+    ap.add_argument("--name", help="dataset name for --snapshots-dir (used in the output file names)")
     ap.add_argument("--min-support", type=float)
     ap.add_argument("--min-confidence", type=float)
     ap.add_argument(
@@ -77,11 +99,18 @@ def main() -> None:
         default=3600,
         help="wall-clock limit per external-baseline run, in seconds (default 3600)",
     )
+    ap.add_argument("--width", type=int, default=1, help="TSARM window width in snapshots (default 1)")
     args = ap.parse_args()
 
-    mode = "synthetic" if args.synthetic else "sample"
-    min_support = args.min_support or DEFAULTS[mode][0]
-    min_confidence = args.min_confidence or DEFAULTS[mode][1]
+    if args.snapshots_dir:
+        if not (args.name and args.min_support and args.min_confidence):
+            sys.exit("--snapshots-dir needs --name, --min-support and --min-confidence")
+        mode = args.name
+        min_support, min_confidence = args.min_support, args.min_confidence
+    else:
+        mode = "synthetic" if args.synthetic else "sample"
+        min_support = args.min_support or DEFAULTS[mode][0]
+        min_confidence = args.min_confidence or DEFAULTS[mode][1]
 
     tmp_ctx = tempfile.TemporaryDirectory(prefix="tsarm_bench_") if args.synthetic else None
     spark = get_spark(app_name="TSARM-benchmark")
@@ -95,11 +124,14 @@ def main() -> None:
             )
             print(f"Generated synthetic dataset: {n} triples, "
                   f"{len(dataset.snapshots)} snapshots.")
+        elif args.snapshots_dir:
+            dataset = snapshots_dataset(args.snapshots_dir.resolve(), args.name)
+            print(f"Dataset {args.name}: {len(dataset.snapshots)} snapshots from {args.snapshots_dir}")
         else:
             dataset = sample_dataset()
 
         baselines = [
-            TSARMBaseline(spark, min_support=min_support, min_confidence=min_confidence),
+            TSARMBaseline(spark, min_support=min_support, min_confidence=min_confidence, width=args.width),
             sansa_baseline(min_support=min_support, min_confidence=min_confidence, timeout_sec=args.timeout),
             rdfrules_baseline(min_support=min_support, min_confidence=min_confidence, timeout_sec=args.timeout),
             amie_baseline(min_support=min_support, min_confidence=min_confidence, timeout_sec=args.timeout),

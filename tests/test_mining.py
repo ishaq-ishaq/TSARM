@@ -245,6 +245,65 @@ def test_recount_multi_item_antecedent(spark):
     assert r.confidence == pytest.approx(2 / 3)
 
 
+def _reference_itemset_counts(tx, isets):
+    """Plain-Python n_w(X) for each itemset X: transactions containing all of X."""
+    counts = {}
+    for r in tx:
+        items = set(r["items"])
+        for key, iset in isets.items():
+            if iset and set(iset) <= items:
+                counts[(r["window_id"], key)] = counts.get((r["window_id"], key), 0) + 1
+    return counts
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_recount_matches_brute_force_on_random_data(spark, seed):
+    # Random transactions over a skewed vocabulary (incl. duplicate items and
+    # empty windows), mined by FP-Growth; every recounted measure must equal a
+    # brute-force count over the same transactions.
+    import random
+
+    rnd = random.Random(seed)
+    vocab = [f"C{i}" for i in range(12)]
+    weights = [12 - i for i in range(12)]
+    rows = []
+    for w in (0, 1, 3):  # window 2 left empty
+        for e in range(rnd.randint(30, 60)):
+            items = rnd.choices(vocab, weights=weights, k=rnd.randint(1, 5))
+            rows.append((w, f"e{e}", items))
+    tx = spark.createDataFrame(rows, schema=_TX_SCHEMA)  # may repeat an item
+    unique = spark.createDataFrame(
+        [(w, e, list(dict.fromkeys(items))) for w, e, items in rows], schema=_TX_SCHEMA
+    )
+    _, rules = mine_rules(unique, min_support=0.15, min_confidence=0.3)
+    dense = recount_candidates(tx, rules, window_ids=[0, 1, 2, 3]).collect()
+    assert dense, "the random data should yield some rules"
+
+    tx_rows = [{"window_id": w, "items": items} for w, _, items in rows]
+    n_tx = {}
+    for r in tx_rows:
+        n_tx[r["window_id"]] = n_tx.get(r["window_id"], 0) + 1
+    isets = {}
+    for r in dense:
+        isets[("A",) + tuple(sorted(r.antecedent))] = r.antecedent
+        isets[("C",) + tuple(sorted(r.consequent))] = r.consequent
+        isets[("F",) + tuple(sorted(set(r.antecedent) | set(r.consequent)))] = list(
+            set(r.antecedent) | set(r.consequent)
+        )
+    ref = _reference_itemset_counts(tx_rows, isets)
+    emitted = {(r.window_id, r.rule_key) for r in rules.collect()}
+    rule_keys = {r.rule_key for r in dense}
+    assert len(dense) == 4 * len(rule_keys)  # dense: every candidate x every window
+    for r in dense:
+        w = r.window_id
+        full = tuple(sorted(set(r.antecedent) | set(r.consequent)))
+        assert r.n_transactions == n_tx.get(w, 0)
+        assert r.antecedent_count == ref.get((w, ("A",) + tuple(sorted(r.antecedent))), 0)
+        assert r.consequent_count == ref.get((w, ("C",) + tuple(sorted(r.consequent))), 0)
+        assert r.rule_count == ref.get((w, ("F",) + full), 0)
+        assert r.emitted == ((w, r.rule_key) in emitted)
+
+
 def test_mine_temporal_returns_dense_candidates(spark):
     df = _windowed(
         spark,

@@ -226,10 +226,15 @@ def recount_candidates(
     A measure whose denominator is zero (empty window, or antecedent absent) is
     reported as ``0.0``: the rule makes no correct predictions there.
 
-    Counting is distributed: transactions and candidate itemsets are both
-    exploded to one row per item, joined on the item (the candidate side is
-    broadcast -- it is small), and a transaction contains an itemset iff it
-    matches all of the itemset's items.
+    Counting is distributed and needs no shuffle of the transactions: each
+    candidate itemset (antecedent, consequent and full rule) is keyed by one
+    of its items, its *anchor*; every transaction item is joined with the
+    itemsets anchored on it (the candidate side is broadcast -- it is small),
+    and the containment test ``iset ⊆ items`` is then evaluated on the joined
+    row itself. As items are duplicate-free per transaction, each
+    (transaction, itemset) pair is matched at most once, so a plain count per
+    (window, itemset) -- combined map-side -- gives ``n_w``. The counts are
+    computed once and shared by the three look-ups below.
 
     Args:
         transactions: ``(window_id, subject, items)`` from
@@ -275,20 +280,20 @@ def recount_candidates(
         )
         .dropDuplicates(["iset_key"])
     )
-    iset_items = itemsets.select(
-        "iset_key", F.size("iset").alias("iset_size"), F.explode("iset").alias("item")
+    # Anchor = the itemset's first (smallest) item; any item would do.
+    anchors = itemsets.where(F.size("iset") > 0).select(
+        "iset_key", "iset", F.col("iset")[0].alias("item")
     )
 
     tx_items = transactions.select(
-        "window_id", "subject", F.explode("items").alias("item")
-    )
+        "window_id", F.array_distinct("items").alias("_items")
+    ).select("window_id", "_items", F.explode("_items").alias("item"))
     itemset_counts = (
-        tx_items.join(F.broadcast(iset_items), "item")
-        .groupBy("window_id", "subject", "iset_key", "iset_size")
-        .agg(F.count("*").alias("matched"))
-        .where(F.col("matched") == F.col("iset_size"))
+        tx_items.join(F.broadcast(anchors), "item")
+        .where(F.size(F.array_except("iset", "_items")) == 0)
         .groupBy("window_id", "iset_key")
         .agg(F.count("*").alias("n"))
+        .localCheckpoint()  # small; computed once, used for all three counts
     )
 
     n_tx = transactions.groupBy("window_id").agg(F.count("*").alias("n_transactions"))

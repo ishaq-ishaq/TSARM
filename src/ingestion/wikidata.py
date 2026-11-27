@@ -282,9 +282,12 @@ def read_statements(spark, path, snapshot: str, snapshot_ts):
     df = spark.read.csv(str(path), sep="\t", header=True, schema=schema)
 
     def as_date(col):
-        # Only plain 4-digit CE years parse; everything else -> null.
+        # Only plain 4-digit CE years parse; everything else -> null. Wikidata
+        # holds impossible calendar dates too (e.g. 1973-04-31), which the
+        # strict ANSI to_date of Spark 4 rejects with an error: try_* -> null.
         return F.when(
-            F.col(col).rlike(r"^\d{4}-\d{2}-\d{2}$"), F.to_date(F.col(col), "yyyy-MM-dd")
+            F.col(col).rlike(r"^\d{4}-\d{2}-\d{2}$"),
+            F.try_to_timestamp(F.col(col), F.lit("yyyy-MM-dd")).cast("date"),
         )
 
     start = as_date("start_time")
