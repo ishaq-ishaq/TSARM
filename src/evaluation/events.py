@@ -150,7 +150,7 @@ def load_events(path, confirmed_only: bool = True) -> List[Event]:
     several items separated by ``;``; ``when`` is ``YYYY-MM[-DD]``.
     """
     events = []
-    with open(path, newline="", encoding="utf-8") as fh:
+    with open(path, newline="", encoding="utf-8-sig") as fh:
         for r in csv.DictReader(line for line in fh if not line.lstrip().startswith("#")):
             if confirmed_only and (r.get("confirmed") or "").strip().lower() not in ("1", "y", "yes"):
                 continue

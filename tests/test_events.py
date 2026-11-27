@@ -1,5 +1,6 @@
 """Tests for E4 candidate events from entity retyping."""
 
+import csv
 from datetime import datetime
 
 import pytest
@@ -66,3 +67,22 @@ def test_recovers_planted_events_and_roundtrip(spark, tmp_path):
     traj = {e.rule_key: ({0: 0.9, 1: 0.1} if e.kind == "decay" else {0: 0.1, 1: 0.9}) for e in events}
     ts, _ = evaluate_events([e for e in events if e.when == datetime(2020, 9, 1)], traj, windows)
     assert ts == 1.0
+
+
+def test_load_events_reads_excel_saved_sheet(tmp_path):
+    """Excel's "CSV UTF-8" adds a byte-order mark and CRLF line ends; the first column is ``kind``."""
+    path = tmp_path / "review.csv"
+    rows = [{"kind": "emergence", "antecedent": "x", "consequent": "y", "when": "2018-01-01",
+             "from_snapshot": "2017-01", "to_snapshot": "2018-01", "n_entities": 5, "n_antecedent": 6,
+             "share": 0.8}]
+    write_candidates(rows, path)
+    with open(path, newline="", encoding="utf-8") as fh:
+        filled = list(csv.DictReader(fh))
+    filled[0].update(confirmed="1", source="diff")  # filled in by hand, then saved by Excel:
+    with open(path, "w", newline="", encoding="utf-8-sig") as fh:  # byte-order mark + CRLF
+        w = csv.DictWriter(fh, fieldnames=list(filled[0]), lineterminator="\r\n")
+        w.writeheader()
+        w.writerows(filled)
+    assert load_events(path, confirmed_only=False)[0].kind == "emergence"
+    events = load_events(path)
+    assert len(events) == 1 and events[0].kind == "emergence" and events[0].rule_key == rule_key(["x"], ["y"])

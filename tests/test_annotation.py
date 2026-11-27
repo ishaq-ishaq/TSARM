@@ -133,3 +133,16 @@ def test_cli(tmp_path):
     rows = list(csv.DictReader(open(out, newline="")))
     assert rows[0]["links"].startswith("https://www.wikidata.org/wiki/Q")
     assert json.loads(Path(str(out) + ".meta.json").read_text())["pool"] == 10
+
+
+def test_score_reads_excel_saved_sheet(tmp_path):
+    """Excel's "CSV UTF-8" adds a byte-order mark and CRLF line ends; scoring must not care."""
+    pool = pool_rules([{"rule_key": k, "lifecycle": "stable"} for k in ("a => b", "c => d")], {})
+    sheet = write_sheet(pool, tmp_path / "sheet.csv")
+    _fill(sheet, {"a => b": ("1", "", ""), "c => d": ("0", "", "")})
+    text = open(sheet, encoding="utf-8").read().replace("\r\n", "\n").replace("\n", "\r\n")
+    with open(sheet, "w", encoding="utf-8-sig", newline="") as fh:
+        fh.write(text)
+    s = score_sheet(sheet)
+    assert s.n_rules == 2 and s.reference == ["a => b"]
+    assert s.per_system["tsarm"]["precision"] == pytest.approx(0.5)

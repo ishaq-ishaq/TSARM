@@ -1,28 +1,38 @@
 # Experiment records
 
 Where the evidence for every reported result is kept. Result data live under
-`results/` (git-ignored); this index is the map. Every result JSON also embeds
+`results/` (git-ignored), one folder per experiment or dataset; this index is the
+map. `results/REORGANISATION_LOG.txt` lists where each file was before the
+folders were introduced (27 Nov 2026). Scripts still write new output to
+`results/` itself. Every result JSON also embeds
 its parameters, stage timings and a hardware fingerprint (CPU, memory, Python,
 Java, Spark versions).
 
 ## E1: core scalability (development machine)
 
-`results/core_scaling_*` (per-run CSV, summary CSV, JSON with hardware), logs next to them.
+`results/E1_core_scaling/`: per-run CSV, summary CSV and JSON (with hardware) of each sweep, logs next to them.
 
 ## E2: multi-node scalability (8 cloud instances, eu-north-1)
 
-`results/tsarm-aws-results.tgz` (as fetched from the master node) and the
-unpacked `results/cluster_scaling_{strong,weak}_aws{.json,_runs.csv,_summary.csv}`;
-node log `results/cluster_scaling_aws_e2-node.log`. Every run records the number
+`results/E2_cluster_scaling/`: `tsarm-aws-results.tgz` (as fetched from the
+master node) and the unpacked `cluster_scaling_{strong,weak}_aws{.json,_runs.csv,_summary.csv}`;
+node log `cluster_scaling_aws_e2-node.log`; the local standalone-cluster checks in
+`local_cluster_checks/`. Every run records the number
 of executors granted (0 mismatches in 30 runs). Gap: no instance-metadata
 document was saved from the cloud provider; the node log and the hardware
 fingerprint identify the instances.
 
 ## E3–E5 on synthetic data, DBpedia
 
-`results/benchmark_*`, `results/quality_*`, `results/dbpedia_*`,
-`results/dbpedia_sample5/` (three repeats, `timings.txt`),
-`results/dbpedia_amie/OUTCOME.txt` (AMIE on the full releases: heap exhausted).
+Synthetic data and the bundled samples: `results/synthetic_and_samples/`
+(`benchmark_*`, `quality_*`, `scale_test.csv`, `sample_temporal_rules.*`).
+DBpedia: `results/dbpedia/` (`dbpedia_*` rules and logs, trajectory clusters
+`clusters_dbpedia_*`, `dbpedia_sample5/` with three repeats and `timings.txt`,
+`dbpedia_amie/OUTCOME.txt`: AMIE on the full releases, heap exhausted).
+
+## Wikidata pilot on generated data
+
+`results/wikidata_rehearsal/` (`wikidata_rehearsal.*`, trajectory clusters `clusters_rehearsal_*`).
 
 ## Wikidata (virtual machine, 4 vCPU / 28 GB, South Africa North)
 
@@ -64,6 +74,12 @@ Recorded limitations, stated rather than omitted:
 
 The VM was deallocated after the records were fetched; its disk is kept.
 
+## Wikidata analysis (development machine)
+
+`results/wikidata_analysis/`: trajectory clustering of the full-data rules
+(`clusters_wikidata_full{,_shape}.{json,log}`) and the labels of the example
+rules (`wikidata_full_example_labels.json`).
+
 ## Wikidata baseline comparison (development machine)
 
 `results/wikidata_baselines/`: `run_e5_wikidata.sh` (exact procedure),
@@ -73,8 +89,38 @@ inputs `in_s0001/`, `in_s001/` (with `sample.json`), the baselines' kept rule
 files `amie_s0001/`, `rdfrules_s0001/` and TSARM's `tsarm_s0001_check.*`,
 `tsarm_s001_check.*`.
 
-## Annotation and events (pending manual work)
+## Rule judgements (E3) and reference events (E4) on Wikidata
 
-`results/annotation/wikidata_full_sheet.csv` (299 rules) and
-`wikidata_s0001_sheet.csv` (3 rules), each with `.meta.json`;
-`results/events/wikidata_candidates_{full,s010}{,_review}.csv`.
+Rule judgements, `results/annotation/`:
+
+* `wikidata_full_sheet.csv` (299 of the 424 full-data rules) and
+  `wikidata_s0001_sheet.csv` (the 3 comparable rules of the baseline
+  comparison), each with `.meta.json`; filled by the researcher on 27 Nov 2026
+  and kept exactly as saved. `RECORDS_NOTE.txt` records provenance notes on
+  the filled sheets and a known gap in the sheet's labels column.
+* Scores: `wikidata_full_sheet.score.json` (precision 0.438, Wilson 95 %
+  0.383–0.495) and `wikidata_s0001_sheet.score.json`.
+* `wikidata_full_retest_sheet.csv`: the blind re-test (75 rules, seed 2026),
+  to be filled at least seven days after the first pass; then
+  `annotation_kit.py score wikidata_full_sheet.csv --retest wikidata_full_retest_sheet.csv`.
+
+Reference events, `results/events/`:
+
+* `wikidata_candidates_{full,s010}.csv` (as proposed) and
+  `..._review.csv` (as confirmed: `confirmed`, `source` = Wikidata revision,
+  `note`); 93 of 139 and 14 of 19 confirmed.
+* `event_rules_measured_full_w1.json`: `scripts/measure_event_rules.py`
+  on the full data, one window per snapshot (per-window counts and confidence
+  of every event rule, TS per sheet, timings, hardware); log and environment in
+  `logs/measure_full_w1.log`, `logs/measure_full_env.txt` (83 min).
+* `event_rules_measured_check_s001.json` + `logs/measure_check_s001.log`: the
+  same procedure on the 1 % sample with two-snapshot windows reproduces the
+  confidences of the mining run for 40 rules exactly (largest difference 0).
+* `event_ts_summary.json`: TS 0.720 (67/93) full, 0.714 (10/14) 10 %; for each
+  missed event, whether the consequent was a direct superclass of the
+  antecedent in both snapshots (18 of 26), from
+  `missed_event_classes_p279_edges.tsv` (best-rank P279 statements of the
+  missed classes in every snapshot).
+* `wikidata_full_ts.json`: scoring on the mining run itself (`propose_events.py score`) gives 0/93: 58
+  events are at the first or last transition, and the others' rules are below
+  the mining support threshold.
