@@ -146,3 +146,25 @@ def test_score_reads_excel_saved_sheet(tmp_path):
     s = score_sheet(sheet)
     assert s.n_rules == 2 and s.reference == ["a => b"]
     assert s.per_system["tsarm"]["precision"] == pytest.approx(0.5)
+
+
+def test_second_annotator_on_subsample(tmp_path):
+    keys = [f"r{i} => x" for i in range(6)]
+    pool = pool_rules([{"rule_key": k, "lifecycle": "stable"} for k in keys], {})
+    sheet = write_sheet(pool, tmp_path / "sheet.csv")
+    _fill(sheet, {k: ("1" if i < 3 else "0", "", "") for i, k in enumerate(keys)})
+    sub = write_retest_sheet(sheet, tmp_path / "second.csv", fraction=1.0, seed=3)
+    rows = list(csv.DictReader(open(sub, newline="")))
+    for r in rows:  # the second annotator agrees except on r0
+        r["retest"] = "0" if r["rule"] == "r0 => x" else ("1" if r["rule"] in keys[:3] else "0")
+    with open(sub, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=rows[0].keys())
+        w.writeheader()
+        w.writerows(rows)
+    s = score_sheet(sheet, second=sub)
+    assert s.mode == "inter-rater-subsample"
+    assert s.n_both_decided == 6 and s.n_disagreements == 1 and s.agreement == pytest.approx(5 / 6)
+    assert s.reference == ["r0 => x", "r1 => x", "r2 => x"]  # verdicts stay judge_a's
+    assert score_sheet(sheet, retest=sub).mode == "intra-rater"
+    with pytest.raises(ValueError):
+        score_sheet(sheet, retest=sub, second=sub)

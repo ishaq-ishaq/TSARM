@@ -24,6 +24,9 @@ blind random quarter of the rules and score against it (intra-rater kappa)::
     python3 scripts/annotation_kit.py score annotation/wikidata_sheet.csv \\
         --retest annotation/wikidata_retest.csv --reference-out annotation/wikidata_reference.csv
 
+A second annotator can fill the same blind subsample sheet independently
+(without seeing ``judge_a``); score it with ``--second`` instead of
+``--retest`` for inter-annotator agreement on the subsample. The score command
 prints Cohen's kappa and per-system precision (Wilson 95 % CI) and relative
 recall, writes the reference set, and a JSON summary next to the sheet.
 """
@@ -109,9 +112,9 @@ def cmd_retest(args) -> None:
 
 
 def cmd_score(args) -> None:
-    s = score_sheet(args.sheet, retest=args.retest)
+    s = score_sheet(args.sheet, retest=args.retest, second=args.second)
     if s.mode == "intra-rater" and not args.retest:
-        print("one annotator and no --retest sheet: agreement and kappa cannot be computed", file=sys.stderr)
+        print("one annotator and no --retest/--second sheet: agreement and kappa cannot be computed", file=sys.stderr)
     print(f"[{s.mode}] rules {s.n_rules}; pairs {s.n_both_decided}; agreement {s.agreement:.3f}; "
           f"kappa {s.kappa:.3f}; disagreements {s.n_disagreements}; reference {len(s.reference)}")
     for system, m in s.per_system.items():
@@ -120,7 +123,8 @@ def cmd_score(args) -> None:
     if args.reference_out:
         write_reference(s.reference, args.reference_out, note=f"agreed-valid rules from {args.sheet}")
         print(f"wrote {args.reference_out}")
-    summary = Path(args.sheet).with_suffix(".score.json")
+    tag = ".second" if args.second else ".retest" if args.retest else ""
+    summary = Path(args.sheet).with_suffix(f"{tag}.score.json")
     summary.write_text(json.dumps({k: v for k, v in s.__dict__.items()}, indent=2))
     print(f"wrote {summary}")
 
@@ -147,6 +151,7 @@ def main() -> None:
     sc = sub.add_parser("score", help="score a filled sheet")
     sc.add_argument("sheet")
     sc.add_argument("--retest", help="filled re-labelling sheet (single-annotator protocol)")
+    sc.add_argument("--second", help="subsample sheet filled independently by a second annotator (retest column)")
     sc.add_argument("--reference-out")
     sc.set_defaults(func=cmd_score)
     args = ap.parse_args()

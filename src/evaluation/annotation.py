@@ -303,10 +303,12 @@ class AnnotationScore:
     n_disagreements: int
     reference: List[str]
     per_system: Dict[str, Dict[str, float]]
-    mode: str = "inter-rater"  # "inter-rater" (judge_a vs judge_b) or "intra-rater" (judge_a vs retest)
+    # "inter-rater" (judge_a vs judge_b), "intra-rater" (judge_a vs the same annotator's retest) or
+    # "inter-rater-subsample" (judge_a vs a second annotator's labels on the blind subsample sheet)
+    mode: str = "inter-rater"
 
 
-def score_sheet(path, retest=None) -> AnnotationScore:
+def score_sheet(path, retest=None, second=None) -> AnnotationScore:
     """Agreement, reference set and per-system precision / relative recall.
 
     Two annotators: agreement and kappa compare ``judge_a`` with ``judge_b``,
@@ -316,15 +318,24 @@ def score_sheet(path, retest=None) -> AnnotationScore:
     sheet as ``retest``. Agreement and kappa then compare each re-labelled
     rule's ``judge_a`` with its ``retest`` label (intra-rater reliability), and
     a rule's verdict is ``final`` if given, else ``judge_a``.
+
+    One annotator plus a second annotator on a subsample: pass the blind
+    subsample sheet filled by the second annotator (its ``retest`` column) as
+    ``second``. The comparison is the same as for ``retest``, but it measures
+    agreement *between* annotators, so the mode is ``inter-rater-subsample``.
+    The verdicts stay those of ``judge_a`` (or ``final``).
     """
+    if retest is not None and second is not None:
+        raise ValueError("pass either retest (same annotator) or second (another annotator), not both")
+    paired = retest if retest is not None else second
     with open(path, newline="", encoding="utf-8-sig") as fh:
         rows = list(csv.DictReader(fh))
     single = all(_judgement(r.get("judge_b", "")) is None for r in rows)
     pairs, verdict, disagreements = [], {}, 0
     if single:
         first = {r["rule"]: _judgement(r["judge_a"]) for r in rows}
-        if retest is not None:
-            with open(retest, newline="", encoding="utf-8-sig") as fh:
+        if paired is not None:
+            with open(paired, newline="", encoding="utf-8-sig") as fh:
                 for r in csv.DictReader(fh):
                     a, b = first.get(r["rule"]), _judgement(r["retest"])
                     if a is not None and b is not None:
@@ -364,7 +375,7 @@ def score_sheet(path, retest=None) -> AnnotationScore:
         n_disagreements=disagreements,
         reference=reference,
         per_system=per_system,
-        mode="intra-rater" if single else "inter-rater",
+        mode="inter-rater" if not single else ("inter-rater-subsample" if second is not None else "intra-rater"),
     )
 
 
